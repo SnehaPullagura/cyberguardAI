@@ -70,12 +70,12 @@ def test_worker_failure_retry_and_dlq():
         "source_type": "syslog",
         "category": "authentication",
         "action": "login_failed",
-        "severity": "invalid_severity_type_error",
+        "severity": "high",
         "retry_count": 0,
     }
 
-    # First attempt (retry_count 0 -> 1)
-    with mock.patch("time.sleep"):
+    # Mock process_single_security_event to simulate event processing exception
+    with mock.patch("app.workers.event_worker.process_single_security_event", side_effect=ValueError("Simulated failure")), mock.patch("time.sleep"):
         success = worker.process_event_dict(invalid_event_dict)
         assert success is False
         assert invalid_event_dict["retry_count"] == 1
@@ -86,11 +86,11 @@ def test_worker_failure_retry_and_dlq():
         "source_type": "syslog",
         "category": "authentication",
         "action": "login_failed",
-        "severity": "invalid_severity_type_error",
+        "severity": "high",
         "retry_count": 3,
     }
 
-    with mock.patch.object(redis_queue, "push_dlq") as mock_dlq:
+    with mock.patch("app.workers.event_worker.process_single_security_event", side_effect=ValueError("Simulated failure")), mock.patch.object(redis_queue, "push_dlq") as mock_dlq:
         success = worker.process_event_dict(exhausted_event_dict)
         assert success is False
         assert mock_dlq.called is True

@@ -4,6 +4,9 @@ import pandas as pd
 from typing import Dict, Any, Tuple
 from sklearn.preprocessing import StandardScaler
 
+from app.ml.models.base import BaseAnomalyDetector
+from app.ml.config.settings import ml_config
+
 try:
     import torch
     import torch.nn as nn
@@ -15,18 +18,19 @@ except ImportError:
 
 if HAS_TORCH:
     class PyTorchAutoencoderNet(nn.Module):
-        def __init__(self, input_dim: int):
+        def __init__(self, input_dim: int, latent_dim: int = 8):
             super().__init__()
+            hidden_dim = max(latent_dim * 2, 16)
             self.encoder = nn.Sequential(
-                nn.Linear(input_dim, 16),
+                nn.Linear(input_dim, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(16, 8),
+                nn.Linear(hidden_dim, latent_dim),
                 nn.ReLU(),
             )
             self.decoder = nn.Sequential(
-                nn.Linear(8, 16),
+                nn.Linear(latent_dim, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(16, input_dim),
+                nn.Linear(hidden_dim, input_dim),
             )
 
         def forward(self, x):
@@ -35,24 +39,34 @@ if HAS_TORCH:
             return reconstructed
 
 
-class NeuralAutoencoderDetector:
-    """Neural Autoencoder for feature reconstruction anomaly detection."""
+class NeuralAutoencoderDetector(BaseAnomalyDetector):
+    """PyTorch Neural Autoencoder for feature reconstruction anomaly detection."""
 
-    def __init__(self, epochs: int = 20, batch_size: int = 32, learning_rate: float = 0.001):
+    def __init__(
+        self,
+        epochs: int = ml_config.AE_EPOCHS,
+        batch_size: int = ml_config.AE_BATCH_SIZE,
+        learning_rate: float = ml_config.AE_LEARNING_RATE,
+        latent_dim: int = ml_config.AE_LATENT_DIM,
+    ):
+        super().__init__("autoencoder")
         self.epochs = epochs
         self.batch_size = batch_size
         self.learning_rate = learning_rate
+        self.latent_dim = latent_dim
         self.scaler = StandardScaler()
         self.model = None
+        self.input_dim = 11
         self.is_fitted = False
         self.threshold = 0.5
 
     def fit(self, X: pd.DataFrame) -> Dict[str, Any]:
         X_scaled = self.scaler.fit_transform(X)
-        input_dim = X_scaled.shape[1]
+        self.input_dim = X_scaled.shape[1]
 
         if HAS_TORCH:
-            self.model = PyTorchAutoencoderNet(input_dim)
+            torch.manual_seed(42)
+            self.model = PyTorchAutoencoderNet(self.input_dim, self.latent_dim)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
             criterion = nn.MSELoss()
 
@@ -72,18 +86,22 @@ class NeuralAutoencoderDetector:
                     optimizer.step()
                     final_loss = loss.item()
 
-            # Determine anomaly threshold based on 95th percentile reconstruction loss
             self.model.eval()
             with torch.no_grad():
                 reconstructed = self.model(tensor_data)
                 mse = torch.mean((reconstructed - tensor_data) ** 2, dim=1).numpy()
-                self.threshold = float(np.percentile(mse, 95))
+                self.threshold = float(np.percentile(mse, ml_config.AE_PERCENTILE_THRESHOLD))
 
             self.is_fitted = True
-            return {"final_loss": final_loss, "threshold": self.threshold}
+            return {
+                "algorithm": "autoencoder",
+                "final_loss": float(final_loss),
+                "reconstruction_threshold": float(self.threshold),
+                "sample_count": len(X),
+            }
         else:
-            # Simple PCA/Reconstruction matrix fallback if PyTorch is not present
             self.is_fitted = True
+            self.threshold = 0.5
             return {"status": "fallback_fitted", "threshold": self.threshold}
 
     def predict(self, X: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
@@ -103,29 +121,32 @@ class NeuralAutoencoderDetector:
             scores = np.clip(mse / (self.threshold * 2.0 + 1e-6), 0.0, 1.0)
             return preds, scores
         else:
-            # Fallback
             scores = np.zeros(len(X))
             preds = np.ones(len(X))
             return preds, scores
 
-    def save(self, filepath: str):
+    def save(self, filepath: str) -> None:
         joblib.dump(
             {
                 "model_state": self.model.state_dict() if (HAS_TORCH and self.model) else None,
                 "scaler": self.scaler,
+                "input_dim": self.input_dim,
+                "latent_dim": self.latent_dim,
                 "threshold": self.threshold,
                 "is_fitted": self.is_fitted,
             },
             filepath,
         )
 
-    def load(self, filepath: str, input_dim: int = 11):
+    def load(self, filepath: str) -> None:
         data = joblib.load(filepath)
         self.scaler = data["scaler"]
+        self.input_dim = data.get("input_dim", 11)
+        self.latent_dim = data.get("latent_dim", self.latent_dim)
         self.threshold = data["threshold"]
         self.is_fitted = data["is_fitted"]
 
         if HAS_TORCH and data["model_state"]:
-            self.model = PyTorchAutoencoderNet(input_dim)
+            self.model = PyTorchAutoencoderNet(self.input_dim, self.latent_dim)
             self.model.load_state_dict(data["model_state"])
             self.model.eval()

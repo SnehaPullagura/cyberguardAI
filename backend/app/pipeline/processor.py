@@ -31,8 +31,8 @@ def process_single_security_event(
     else:
         normalized_event = event_data
 
-    # 2. Compute AI Anomaly Detection Inference
-    is_anomaly, anomaly_score, features = (
+    # 2. Compute AI Anomaly Detection Inference (Fail-safe)
+    is_anomaly, anomaly_score, features, ml_result = (
         ml_pipeline_manager.predict_event_anomaly(normalized_event)
     )
 
@@ -44,6 +44,9 @@ def process_single_security_event(
         calculated_risk = 75.0
     elif normalized_event.severity == "medium":
         calculated_risk = 50.0
+
+    # Combine with ensemble ML anomaly score
+    calculated_risk = max(calculated_risk, anomaly_score * 100.0)
 
     # 3. Create SecurityEvent model object
     db_event = SecurityEvent(
@@ -190,6 +193,7 @@ def process_single_security_event(
             event_details={
                 "event_id": normalized_event.event_id,
                 "features": features,
+                "ml_details": ml_result.dict() if ml_result else {},
             },
         )
 

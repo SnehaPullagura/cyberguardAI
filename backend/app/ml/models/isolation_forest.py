@@ -5,17 +5,27 @@ from typing import Dict, Any, Tuple
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 
+from app.ml.models.base import BaseAnomalyDetector
+from app.ml.config.settings import ml_config
 
-class IsolationForestDetector:
-    """Isolation Forest unsupervised anomaly detector."""
 
-    def __init__(self, contamination: float = 0.05, n_estimators: int = 100):
+class IsolationForestDetector(BaseAnomalyDetector):
+    """Production-grade Isolation Forest unsupervised anomaly detector."""
+
+    def __init__(
+        self,
+        contamination: float = ml_config.IF_CONTAMINATION,
+        n_estimators: int = ml_config.IF_N_ESTIMATORS,
+        random_state: int = ml_config.IF_RANDOM_STATE,
+    ):
+        super().__init__("isolation_forest")
         self.contamination = contamination
         self.n_estimators = n_estimators
+        self.random_state = random_state
         self.model = IsolationForest(
             contamination=self.contamination,
             n_estimators=self.n_estimators,
-            random_state=42,
+            random_state=self.random_state,
         )
         self.scaler = StandardScaler()
         self.is_fitted = False
@@ -26,15 +36,18 @@ class IsolationForestDetector:
         self.model.fit(X_scaled)
         self.is_fitted = True
 
-        scores = self.model.decision_function(X_scaled)
+        raw_scores = self.model.decision_function(X_scaled)
         return {
-            "mean_score": float(np.mean(scores)),
-            "std_score": float(np.std(scores)),
+            "algorithm": "isolation_forest",
+            "mean_decision_score": float(np.mean(raw_scores)),
+            "std_decision_score": float(np.std(raw_scores)),
             "sample_count": len(X),
+            "contamination": self.contamination,
+            "n_estimators": self.n_estimators,
         }
 
     def predict(self, X: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
-        """Predict anomaly labels (-1 anomaly, 1 normal) and anomaly scores."""
+        """Predict anomaly labels (-1 anomaly, 1 normal) and normalized anomaly scores [0.0, 1.0]."""
         if not self.is_fitted:
             raise RuntimeError("IsolationForest model is not fitted yet.")
 
@@ -42,17 +55,27 @@ class IsolationForestDetector:
         preds = self.model.predict(X_scaled)  # -1 = anomaly, 1 = normal
         raw_scores = self.model.decision_function(X_scaled)
 
-        # Convert decision function (higher is normal) to anomaly score (0.0 to 1.0, higher is more anomalous)
-        anomaly_scores = 1.0 - (
-            (raw_scores - raw_scores.min()) / (raw_scores.max() - raw_scores.min() + 1e-6)
-        )
+        # Calibrated Sigmoid transform: raw decision_function > 0 is normal, < 0 is anomaly
+        # Anomaly score scaled smoothly in [0.0, 1.0] where 1.0 = high anomaly
+        anomaly_scores = 1.0 / (1.0 + np.exp(raw_scores * 5.0))
         return preds, anomaly_scores
 
-    def save(self, filepath: str):
-        joblib.dump({"model": self.model, "scaler": self.scaler, "is_fitted": self.is_fitted}, filepath)
+    def save(self, filepath: str) -> None:
+        joblib.dump(
+            {
+                "model": self.model,
+                "scaler": self.scaler,
+                "contamination": self.contamination,
+                "n_estimators": self.n_estimators,
+                "is_fitted": self.is_fitted,
+            },
+            filepath,
+        )
 
-    def load(self, filepath: str):
+    def load(self, filepath: str) -> None:
         data = joblib.load(filepath)
         self.model = data["model"]
         self.scaler = data["scaler"]
+        self.contamination = data.get("contamination", self.contamination)
+        self.n_estimators = data.get("n_estimators", self.n_estimators)
         self.is_fitted = data["is_fitted"]

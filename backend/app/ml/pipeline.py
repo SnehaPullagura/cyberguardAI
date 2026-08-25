@@ -7,22 +7,31 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.schemas.event import SecurityEventCreate
-from app.ml.feature_extraction import feature_extractor
+from app.ml.features.extractor import feature_extractor
 from app.ml.models.isolation_forest import IsolationForestDetector
 from app.ml.models.autoencoder import NeuralAutoencoderDetector
 from app.ml.models.dbscan import DBSCANDetector
+from app.ml.inference.ensemble import EnsembleInferencePipeline
+from app.ml.inference.result import MLInferenceResult
+from app.ml.artifacts.storage import artifact_storage
+from app.ml.registry.model_registry import model_registry_service
 from app.models.ml_model import MLModelRegistry
 
 logger = logging.getLogger(__name__)
 
 
 class MLPipelineManager:
-    """Manages training, artifact storage, and real-time inference for AI anomaly detection models."""
+    """Unified pipeline manager coordinating model training, artifact persistence, registry tracking, and fail-safe ensemble inference."""
 
     def __init__(self):
-        self.active_model = IsolationForestDetector()
-        self.artifact_dir = settings.ML_MODEL_DIR
-        os.makedirs(self.artifact_dir, exist_ok=True)
+        self.if_detector = IsolationForestDetector()
+        self.ae_detector = NeuralAutoencoderDetector()
+        self.dbscan_detector = DBSCANDetector()
+        self.ensemble_pipeline = EnsembleInferencePipeline(
+            if_model=self.if_detector,
+            ae_model=self.ae_detector,
+            dbscan_model=self.dbscan_detector,
+        )
 
     def train_model(
         self,
@@ -31,79 +40,74 @@ class MLPipelineManager:
         algorithm: str = "isolation_forest",
         contamination: float = 0.05,
     ) -> MLModelRegistry:
-        """Train a model on provided events and register in DB model catalog."""
+        """Train a model on provided security events and register in DB catalog."""
         if not events:
             raise ValueError("Cannot train ML model with 0 events.")
 
         df_features = feature_extractor.transform_batch(events)
         version = f"v{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
         model_id = str(uuid.uuid4())
-        artifact_filename = f"{algorithm}_{version}_{model_id[:8]}.joblib"
-        artifact_path = os.path.join(self.artifact_dir, artifact_filename)
+        filename = f"{algorithm}_{version}_{model_id[:8]}.joblib"
+        artifact_path = artifact_storage.get_artifact_path(filename)
 
         metrics: Dict[str, Any] = {}
 
         if algorithm == "isolation_forest":
-            detector = IsolationForestDetector(contamination=contamination)
-            metrics = detector.fit(df_features)
-            detector.save(artifact_path)
-            self.active_model = detector
+            self.if_detector = IsolationForestDetector(contamination=contamination)
+            metrics = self.if_detector.fit(df_features)
+            self.if_detector.save(artifact_path)
         elif algorithm == "autoencoder":
-            detector = NeuralAutoencoderDetector()
-            metrics = detector.fit(df_features)
-            detector.save(artifact_path)
-            self.active_model = detector
+            self.ae_detector = NeuralAutoencoderDetector()
+            metrics = self.ae_detector.fit(df_features)
+            self.ae_detector.save(artifact_path)
         elif algorithm == "dbscan":
-            detector = DBSCANDetector()
-            metrics = detector.fit(df_features)
-            detector.save(artifact_path)
-            self.active_model = detector
+            self.dbscan_detector = DBSCANDetector()
+            metrics = self.dbscan_detector.fit(df_features)
+            self.dbscan_detector.save(artifact_path)
         else:
             raise ValueError(f"Unsupported algorithm: {algorithm}")
 
-        # Deactivate previous active models in DB
-        db.query(MLModelRegistry).filter(
-            MLModelRegistry.algorithm == algorithm
-        ).update({"is_active": False})
+        # Update Ensemble Pipeline references
+        self.ensemble_pipeline = EnsembleInferencePipeline(
+            if_model=self.if_detector,
+            ae_model=self.ae_detector,
+            dbscan_model=self.dbscan_detector,
+        )
 
-        registry_entry = MLModelRegistry(
-            id=model_id,
+        return model_registry_service.register_model(
+            db=db,
+            model_id=model_id,
             model_name=f"CyberGuard-{algorithm.upper()}",
             version=version,
             algorithm=algorithm,
+            artifact_path=artifact_path,
             metrics=metrics,
             parameters={"contamination": contamination, "sample_count": len(events)},
-            artifact_path=artifact_path,
+            training_sample_count=len(events),
             is_active=True,
-            trained_at=datetime.utcnow(),
-            training_sample_count=float(len(events)),
         )
-
-        db.add(registry_entry)
-        db.commit()
-        db.refresh(registry_entry)
-        return registry_entry
 
     def predict_event_anomaly(
         self, event: SecurityEventCreate
-    ) -> Tuple[bool, float, Dict[str, float]]:
-        """Run real-time anomaly inference on a single normalized event."""
+    ) -> Tuple[bool, float, Dict[str, float], Optional[MLInferenceResult]]:
+        """Run fail-safe real-time ensemble anomaly inference on a single security log event."""
         features_dict = feature_extractor.extract_features(event)
-        df_features = feature_extractor.transform_batch([event])
 
         try:
-            if hasattr(self.active_model, "is_fitted") and self.active_model.is_fitted:
-                preds, scores = self.active_model.predict(df_features)
-                is_anomaly = bool(preds[0] == -1)
-                anomaly_score = float(scores[0])
-                return is_anomaly, anomaly_score, features_dict
+            inference_result = self.ensemble_pipeline.predict(event)
+            return (
+                inference_result.is_anomaly,
+                inference_result.ensemble_anomaly_score,
+                features_dict,
+                inference_result,
+            )
         except Exception as e:
-            logger.warning(f"ML inference error ({e}), skipping anomaly score.")
+            logger.warning(f"Fail-safe ML inference exception ({e}), falling back to heuristic scoring.")
 
-        # Default fallback heuristic if no model trained yet
+        # Fail-safe heuristic fallback if ML model fails
         is_anomaly = event.severity == "critical" or "attack" in event.action
-        anomaly_score = 0.85 if is_anomaly else 0.1
-        return is_anomaly, anomaly_score, features_dict
+        anomaly_score = 0.85 if is_anomaly else 0.10
+        return is_anomaly, anomaly_score, features_dict, None
 
 
 ml_pipeline_manager = MLPipelineManager()
