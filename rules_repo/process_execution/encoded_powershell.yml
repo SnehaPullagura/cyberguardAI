@@ -1,0 +1,17 @@
+title: Encoded PowerShell Command Line Execution
+id: RULE-PROC-002
+status: test
+description: Detects execution of PowerShell with base64 encoded payload (-EncodedCommand / -enc).
+references:
+  - https://attack.mitre.org/techniques/T1059/001/
+author: CyberGuard AI Team
+date: 2026/08/25
+severity: critical
+category: process
+tags:
+  - attack.t1059.001
+  - attack.execution
+condition:
+  category: process
+  match_any:
+    process.command_line: "regex:.*-encodedcommand.*|.*-enc.*"

@@ -1,0 +1,20 @@
+title: SSH Brute Force Login Failure Pattern
+id: RULE-AUTH-001
+status: test
+description: Detects multiple SSH authentication failures originating from an external source IP address.
+references:
+  - https://attack.mitre.org/techniques/T1110/
+author: CyberGuard AI Team
+date: 2026/08/25
+severity: high
+category: authentication
+tags:
+  - attack.t1110
+  - attack.credential_access
+condition:
+  category: authentication
+  match_all:
+    action: login_failed
+    source_type: syslog
+  threshold: 5
+  timeframe_seconds: 300
