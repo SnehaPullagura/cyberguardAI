@@ -11,6 +11,7 @@ from app.api.v1 import (
     reports,
     audit,
     health,
+    websocket_router,
 )
 
 api_v1_router = APIRouter()
@@ -25,3 +26,4 @@ api_v1_router.include_router(dashboard.router)
 api_v1_router.include_router(reports.router)
 api_v1_router.include_router(audit.router)
 api_v1_router.include_router(health.router)
+api_v1_router.include_router(websocket_router.router)

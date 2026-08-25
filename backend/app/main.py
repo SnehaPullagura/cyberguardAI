@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -9,6 +10,7 @@ from app.database import engine, Base, SessionLocal
 from app.models import User, Role, Permission, DetectionRule, ThreatIoC
 from app.security.password import get_password_hash
 from app.api.v1.router import api_v1_router
+from app.websockets.pubsub import start_redis_pubsub_listener
 from app.middleware.security import (
     CorrelationIdMiddleware,
     SecurityHeadersMiddleware,
@@ -130,7 +132,11 @@ async def lifespan(app: FastAPI):
         seed_initial_data(db)
     finally:
         db.close()
+
+    # Launch background Redis Pub/Sub listener for real-time WebSockets
+    pubsub_task = asyncio.create_task(start_redis_pubsub_listener())
     yield
+    pubsub_task.cancel()
     logger.info("Shutting down CyberGuard AI service...")
 
 

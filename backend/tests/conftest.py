@@ -71,3 +71,9 @@ def admin_headers(db_session):
     admin_user = db_session.query(User).filter(User.username == "admin").first()
     token = create_access_token(subject=admin_user.id)
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def admin_token(db_session):
+    admin_user = db_session.query(User).filter(User.username == "admin").first()
+    return create_access_token(subject=admin_user.id)

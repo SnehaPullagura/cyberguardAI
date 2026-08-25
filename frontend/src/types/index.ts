@@ -14,6 +14,8 @@ export interface SecurityEvent {
   destination_host?: string;
   process_name?: string;
   raw_payload?: string;
+  risk_score?: number;
+  anomaly_score?: number;
 }
 
 export interface SecurityAlert {
@@ -64,4 +66,15 @@ export interface DashboardSummary {
   }>;
   alerts_by_severity: Record<string, number>;
   events_trend: Array<{ timestamp: string; count: number }>;
+}
+
+export type ConnectionStatus = 'CONNECTED' | 'CONNECTING' | 'RECONNECTING' | 'DISCONNECTED';
+
+export interface RealtimeEventEnvelope {
+  message_id: string;
+  type: 'security_event' | 'alert_created' | 'alert_updated' | 'incident_created' | 'incident_updated' | 'dashboard_metric' | 'heartbeat' | 'system_status' | 'error';
+  timestamp: string;
+  correlation_id?: string;
+  schema_version: string;
+  data: Record<string, any>;
 }

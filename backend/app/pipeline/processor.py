@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.event import SecurityEvent
 from app.models.rule import DetectionRule
 from app.schemas.event import SecurityEventCreate
+from app.schemas.websocket import RealtimeEventEnvelope
 from app.normalization.normalizer import normalizer
 from app.engines.rule_engine import rule_engine
 from app.engines.threat_intel_matcher import threat_intel_matcher
@@ -13,6 +14,7 @@ from app.engines.risk_engine import risk_scoring_engine
 from app.services.alert_service import alert_service
 from app.ml.pipeline import ml_pipeline_manager
 from app.repositories.event_repository import event_repository
+from app.websockets.pubsub import publish_realtime_event
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,7 @@ logger = logging.getLogger(__name__)
 def process_single_security_event(
     db: Session, event_data: SecurityEventCreate
 ) -> SecurityEvent:
-    """Process a single SecurityEventCreate through normalization, EventRepository persistence, rule evaluation, IoC matching, ML anomaly detection, alert creation, and incident correlation."""
+    """Process a single SecurityEventCreate through normalization, EventRepository persistence, rule evaluation, IoC matching, ML anomaly detection, alert creation, incident correlation, and real-time Redis Pub/Sub publishing."""
     # 1. Normalize if raw payload provided
     if event_data.raw_payload:
         normalized_event = normalizer.normalize(
@@ -115,13 +117,32 @@ def process_single_security_event(
     if not is_new:
         return persisted_event
 
+    # Publish real-time event envelope to Redis Pub/Sub after persistence
+    publish_realtime_event(
+        RealtimeEventEnvelope(
+            type="security_event",
+            data={
+                "id": persisted_event.id,
+                "event_id": persisted_event.event_id,
+                "timestamp": persisted_event.timestamp.isoformat(),
+                "source_type": persisted_event.source_type,
+                "category": persisted_event.category,
+                "action": persisted_event.action,
+                "severity": persisted_event.severity,
+                "source_ip": persisted_event.source_ip,
+                "risk_score": persisted_event.risk_score,
+                "anomaly_score": persisted_event.anomaly_score,
+            },
+        )
+    )
+
     # 5. Rule-Based Detection Engine Evaluation
     active_rules = (
         db.query(DetectionRule).filter(DetectionRule.enabled == True).all()
     )
     for rule in active_rules:
         if rule_engine.evaluate_event(normalized_event, rule.condition):
-            alert_service.create_alert(
+            alert = alert_service.create_alert(
                 db=db,
                 title=f"Rule Triggered: {rule.title}",
                 severity=rule.severity,
@@ -151,11 +172,23 @@ def process_single_security_event(
                     "action": normalized_event.action,
                 },
             )
+            publish_realtime_event(
+                RealtimeEventEnvelope(
+                    type="alert_created",
+                    data={
+                        "id": alert.id,
+                        "title": alert.title,
+                        "severity": alert.severity,
+                        "risk_score": alert.risk_score,
+                        "source_entity": alert.source_entity,
+                    },
+                )
+            )
 
     # 6. Threat Intelligence Matching
     ioc_matches = threat_intel_matcher.check_event(db, normalized_event)
     for ioc, match_details in ioc_matches:
-        alert_service.create_alert(
+        alert = alert_service.create_alert(
             db=db,
             title=f"Threat Intelligence IoC Match: {ioc.value}",
             severity="high" if ioc.threat_type in ["C2", "malware"] else "medium",
@@ -169,10 +202,22 @@ def process_single_security_event(
             ),
             description=f"{match_details} ({ioc.threat_type} from {ioc.source})",
         )
+        publish_realtime_event(
+            RealtimeEventEnvelope(
+                type="alert_created",
+                data={
+                    "id": alert.id,
+                    "title": alert.title,
+                    "severity": alert.severity,
+                    "risk_score": alert.risk_score,
+                    "source_entity": alert.source_entity,
+                },
+            )
+        )
 
     # 7. AI Anomaly Detection Alert Creation
     if is_anomaly and anomaly_score > 0.7:
-        alert_service.create_alert(
+        alert = alert_service.create_alert(
             db=db,
             title=f"AI Anomaly Detected (Score: {anomaly_score:.2f})",
             severity="high" if anomaly_score > 0.85 else "medium",
@@ -189,6 +234,18 @@ def process_single_security_event(
                 "features": features,
                 "ml_details": ml_result.dict() if ml_result else {},
             },
+        )
+        publish_realtime_event(
+            RealtimeEventEnvelope(
+                type="alert_created",
+                data={
+                    "id": alert.id,
+                    "title": alert.title,
+                    "severity": alert.severity,
+                    "risk_score": alert.risk_score,
+                    "source_entity": alert.source_entity,
+                },
+            )
         )
 
     db.commit()

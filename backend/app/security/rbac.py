@@ -69,6 +69,13 @@ ROLE_PERMISSIONS = {
 }
 
 
+def get_role_permissions(role_name: str) -> Set[Permission]:
+    """Get active permissions set for a given role name."""
+    if not role_name:
+        return ROLE_PERMISSIONS["viewer"]
+    return ROLE_PERMISSIONS.get(role_name.lower(), ROLE_PERMISSIONS["viewer"])
+
+
 def get_user_permissions(user: User) -> Set[Permission]:
     """Resolve active permissions for a user based on assigned roles and explicit permissions."""
     permissions: Set[Permission] = set()

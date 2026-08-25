@@ -65,6 +65,19 @@ def decode_token(token: str) -> dict:
         ) from e
 
 
+def decode_access_token(token: str) -> Optional[dict]:
+    """Safe helper to decode JWT access token without throwing HTTP exceptions."""
+    try:
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
+        if payload.get("type") == "access":
+            return payload
+    except Exception:
+        pass
+    return None
+
+
 def get_current_user(
     db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)
 ) -> User:
