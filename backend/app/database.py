@@ -1,7 +1,7 @@
 import os
 import logging
 from typing import Generator
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from app.config import settings
 
@@ -18,12 +18,17 @@ else:
         engine = create_engine(db_url, connect_args={"check_same_thread": False})
     else:
         try:
-            engine = create_engine(
+            temp_engine = create_engine(
                 db_url,
                 pool_pre_ping=True,
                 pool_size=20,
                 max_overflow=10,
             )
+            # Test actual connection to verify PostgreSQL is running
+            with temp_engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            engine = temp_engine
+            logger.info("Successfully connected to primary PostgreSQL / TimescaleDB database.")
         except Exception as e:
             logger.warning(
                 f"Could not connect to PostgreSQL ({e}), falling back to SQLite for local development."
