@@ -36,17 +36,11 @@ def process_single_security_event(
         ml_pipeline_manager.predict_event_anomaly(normalized_event)
     )
 
-    # Calculate initial event risk score
-    calculated_risk = 0.0
-    if normalized_event.severity == "critical":
-        calculated_risk = 90.0
-    elif normalized_event.severity == "high":
-        calculated_risk = 75.0
-    elif normalized_event.severity == "medium":
-        calculated_risk = 50.0
-
-    # Combine with ensemble ML anomaly score
-    calculated_risk = max(calculated_risk, anomaly_score * 100.0)
+    # Calculate initial event risk score using RiskScoringEngine
+    calculated_risk = risk_scoring_engine.calculate_event_risk_score(
+        severity=normalized_event.severity,
+        ml_result=ml_result,
+    )
 
     # 3. Create SecurityEvent model object
     db_event = SecurityEvent(

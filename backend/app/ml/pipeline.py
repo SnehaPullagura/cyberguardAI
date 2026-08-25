@@ -33,6 +33,33 @@ class MLPipelineManager:
             dbscan_model=self.dbscan_detector,
         )
 
+    def load_active_models(self, db: Session) -> Dict[str, bool]:
+        """Load active models from DB registry into active memory detectors."""
+        loaded_status = {}
+        for algo, detector in [
+            ("isolation_forest", self.if_detector),
+            ("autoencoder", self.ae_detector),
+            ("dbscan", self.dbscan_detector),
+        ]:
+            active_entry = model_registry_service.get_active_model(db, algo)
+            if active_entry and active_entry.artifact_path and os.path.exists(active_entry.artifact_path):
+                try:
+                    detector.load(active_entry.artifact_path)
+                    loaded_status[algo] = True
+                    logger.info(f"Loaded active {algo} model version {active_entry.version} from {active_entry.artifact_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to load active {algo} model ({e}).")
+                    loaded_status[algo] = False
+            else:
+                loaded_status[algo] = False
+
+        self.ensemble_pipeline = EnsembleInferencePipeline(
+            if_model=self.if_detector,
+            ae_model=self.ae_detector,
+            dbscan_model=self.dbscan_detector,
+        )
+        return loaded_status
+
     def train_model(
         self,
         db: Session,
@@ -67,7 +94,6 @@ class MLPipelineManager:
         else:
             raise ValueError(f"Unsupported algorithm: {algorithm}")
 
-        # Update Ensemble Pipeline references
         self.ensemble_pipeline = EnsembleInferencePipeline(
             if_model=self.if_detector,
             ae_model=self.ae_detector,
@@ -104,7 +130,6 @@ class MLPipelineManager:
         except Exception as e:
             logger.warning(f"Fail-safe ML inference exception ({e}), falling back to heuristic scoring.")
 
-        # Fail-safe heuristic fallback if ML model fails
         is_anomaly = event.severity == "critical" or "attack" in event.action
         anomaly_score = 0.85 if is_anomaly else 0.10
         return is_anomaly, anomaly_score, features_dict, None
