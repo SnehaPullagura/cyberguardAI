@@ -3,11 +3,11 @@ import asyncio
 import logging
 from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status
-from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.security.auth import decode_access_token
 from app.security.rbac import get_role_permissions, Permission
+from app.security.ws_ticket import validate_and_consume_ws_ticket
 from app.models import User, Role
 from app.schemas.websocket import RealtimeEventEnvelope
 from app.websockets.manager import ws_manager
@@ -20,40 +20,52 @@ router = APIRouter(tags=["Real-Time WebSockets"])
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
+    ticket: Optional[str] = Query(None),
     token: Optional[str] = Query(None),
 ):
-    """Authenticated WebSocket endpoint supporting real-time event streaming, alerts, and live dashboard metrics."""
-    if not token:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Missing authentication token")
-        return
+    """Authenticated WebSocket endpoint validating short-lived single-use tickets to establish secure sessions."""
+    user_id = None
+    role_name = "viewer"
+    username = "unknown"
 
-    # Validate JWT Token
-    payload = decode_access_token(token)
-    if not payload or "sub" not in payload:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid or expired token")
-        return
-
-    user_id = payload["sub"]
-
-    # Retrieve user and roles from DB
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user or not user.is_active:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="User inactive or unauthorized")
+    # 1. Option 2: Primary Single-Use Ticket Validation
+    if ticket:
+        ticket_data = validate_and_consume_ws_ticket(ticket)
+        if not ticket_data:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid or expired ticket")
             return
+        user_id = ticket_data.get("user_id")
+        username = ticket_data.get("username", "unknown")
+        role_name = ticket_data.get("role", "viewer")
+    # Fallback to direct token if present
+    elif token:
+        payload = decode_access_token(token)
+        if not payload or "sub" not in payload:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid or expired token")
+            return
+        user_id = payload["sub"]
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or not user.is_active:
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="User inactive")
+                return
+            role_name = user.role.name if user.role else "viewer"
+            username = user.username
+        finally:
+            db.close()
+    else:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Missing authentication ticket")
+        return
 
-        role_name = user.role.name if user.role else "viewer"
-        permissions = get_role_permissions(role_name)
-    finally:
-        db.close()
-
+    permissions = get_role_permissions(role_name)
     connection_id = f"conn-{uuid.uuid4().hex[:8]}"
+
     await ws_manager.connect(
         connection_id=connection_id,
         websocket=websocket,
-        user_id=user.id,
-        username=user.username,
+        user_id=user_id,
+        username=username,
         role=role_name,
         permissions=permissions,
     )
@@ -64,7 +76,7 @@ async def websocket_endpoint(
         data={
             "status": "connected",
             "connection_id": connection_id,
-            "username": user.username,
+            "username": username,
             "role": role_name,
         },
     )

@@ -21,6 +21,7 @@ from app.security.auth import (
     get_current_user,
 )
 from app.security.rbac import require_permission, Permission
+from app.security.ws_ticket import create_ws_ticket
 from app.services.audit_service import audit_service
 
 router = APIRouter(prefix="/auth", tags=["Authentication & Access Control"])
@@ -70,11 +71,9 @@ def login(request_data: LoginRequest, req: Request, db: Session = Depends(get_db
             status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user account"
         )
 
-    # Issue tokens
     access_token = create_access_token(subject=user.id)
     refresh_token = create_refresh_token(subject=user.id)
 
-    # Audit login success
     audit_service.log_action(
         db=db,
         action="USER_LOGIN_SUCCESS",
@@ -122,6 +121,13 @@ def refresh_token(request_data: RefreshTokenRequest, db: Session = Depends(get_d
         token_type="bearer",
         expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
+
+
+@router.post("/ws-ticket")
+def request_websocket_ticket(current_user: User = Depends(get_current_user)):
+    """Issue a secure, short-lived (60s) single-use ticket for WebSocket authentication."""
+    ticket = create_ws_ticket(current_user)
+    return {"ticket": ticket, "expires_in": 60}
 
 
 @router.get("/me", response_model=UserRead)

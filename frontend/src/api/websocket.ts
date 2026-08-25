@@ -1,4 +1,5 @@
 import { ConnectionStatus, RealtimeEventEnvelope } from '../types';
+import { apiClient } from './client';
 
 type MessageListener = (event: RealtimeEventEnvelope) => void;
 type StatusListener = (status: ConnectionStatus) => void;
@@ -6,7 +7,6 @@ type StatusListener = (status: ConnectionStatus) => void;
 export class ReconnectingWebSocketClient {
   private socket: WebSocket | null = null;
   private url: string;
-  private token: string | null = null;
   private status: ConnectionStatus = 'DISCONNECTED';
   private messageListeners: Set<MessageListener> = new Set();
   private statusListeners: Set<StatusListener> = new Set();
@@ -19,19 +19,26 @@ export class ReconnectingWebSocketClient {
     self_assign_url(this, url);
   }
 
-  public connect(token: string) {
-    this.token = token;
+  public async connect() {
     this.reconnectAttempts = 0;
-    this.initSocket();
+    await this.initSocket();
   }
 
-  private initSocket() {
-    if (!this.token) return;
-
+  private async initSocket() {
     this.setStatus('CONNECTING');
-    const wsUrl = `${this.url}?token=${encodeURIComponent(this.token)}`;
 
     try {
+      // Step 1: Obtain short-lived single-use WebSocket ticket via REST
+      const res = await apiClient.post('/auth/ws-ticket');
+      const ticket = res.data.ticket;
+
+      if (!ticket) {
+        this.setStatus('DISCONNECTED');
+        return;
+      }
+
+      // Step 2: Establish WebSocket connection passing single-use ticket
+      const wsUrl = `${this.url}?ticket=${encodeURIComponent(ticket)}`;
       this.socket = new WebSocket(wsUrl);
 
       this.socket.onopen = () => {
@@ -98,7 +105,6 @@ export class ReconnectingWebSocketClient {
 
   public disconnect() {
     this.stopHeartbeat();
-    this.token = null;
     if (this.socket) {
       this.socket.close();
       this.socket = null;
