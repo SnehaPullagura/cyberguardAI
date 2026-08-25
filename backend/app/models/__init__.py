@@ -19,6 +19,7 @@ from app.models.investigation import (
     CaseNote,
     SavedSearch,
 )
+from app.models.report import ComplianceEvaluation, ReportSchedule
 
 __all__ = [
     "Base",
@@ -47,4 +48,6 @@ __all__ = [
     "CaseTimelineEvent",
     "CaseNote",
     "SavedSearch",
+    "ComplianceEvaluation",
+    "ReportSchedule",
 ]
