@@ -42,6 +42,10 @@ class Permission(str, Enum):
     RESPONSES_READ = "responses:read"
     RESPONSES_EXECUTE = "responses:execute"
 
+    CASES_READ = "cases:read"
+    CASES_WRITE = "cases:write"
+    CASES_ASSIGN = "cases:assign"
+
 
 # Role Permission Mappings
 ROLE_PERMISSIONS = {
@@ -68,6 +72,9 @@ ROLE_PERMISSIONS = {
         Permission.PLAYBOOKS_EXECUTE,
         Permission.RESPONSES_READ,
         Permission.RESPONSES_EXECUTE,
+        Permission.CASES_READ,
+        Permission.CASES_WRITE,
+        Permission.CASES_ASSIGN,
     },
     "viewer": {
         Permission.EVENTS_READ,
@@ -79,6 +86,7 @@ ROLE_PERMISSIONS = {
         Permission.REPORTS_READ,
         Permission.PLAYBOOKS_READ,
         Permission.RESPONSES_READ,
+        Permission.CASES_READ,
     },
 }
 

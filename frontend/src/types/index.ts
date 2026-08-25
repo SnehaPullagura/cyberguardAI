@@ -146,9 +146,93 @@ export interface RealtimeEventEnvelope {
     | 'response_started'
     | 'response_action_completed'
     | 'response_completed'
-    | 'response_failed';
+    | 'response_failed'
+    | 'ioc_created'
+    | 'threat_feed_synced'
+    | 'case_updated'
+    | 'case_assigned'
+    | 'evidence_added';
   timestamp: string;
   correlation_id?: string;
   schema_version: string;
   data: Record<string, any>;
+}
+
+export interface InvestigationCase {
+  id: string;
+  case_id: string;
+  title: string;
+  description?: string;
+  status: 'open' | 'investigating' | 'contained' | 'closed' | 'false_positive';
+  priority: 'P1' | 'P2' | 'P3' | 'P4';
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  incident_id?: string;
+  assignee_id?: string;
+  created_by_id?: string;
+  mitre_tactics?: string[];
+  tags?: string[];
+  created_at: string;
+  updated_at: string;
+  closed_at?: string;
+}
+
+export interface CaseEvidence {
+  id: string;
+  case_id: string;
+  evidence_type: string;
+  title: string;
+  data: Record<string, any>;
+  added_by_id?: string;
+  created_at: string;
+}
+
+export interface CaseTimelineEvent {
+  id: string;
+  case_id: string;
+  timestamp: string;
+  event_type: string;
+  title: string;
+  description?: string;
+  actor?: string;
+  metadata_json?: Record<string, any>;
+}
+
+export interface CaseNote {
+  id: string;
+  case_id: string;
+  author_id: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SavedSearch {
+  id: string;
+  name: string;
+  description?: string;
+  user_id: string;
+  target_entity: string;
+  filter_params: Record<string, any>;
+  created_at: string;
+}
+
+export interface EntityGraphNode {
+  id: string;
+  label: string;
+  type: string;
+  properties?: Record<string, any>;
+}
+
+export interface EntityGraphEdge {
+  source: string;
+  target: string;
+  relationship: string;
+}
+
+export interface EntityGraphData {
+  case_id: string;
+  nodes: EntityGraphNode[];
+  edges: EntityGraphEdge[];
+  nodes_count: number;
+  edges_count: number;
 }

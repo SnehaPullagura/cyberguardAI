@@ -5,11 +5,20 @@ from app.models.rule import DetectionRule
 from app.models.alert import Alert
 from app.models.incident import Incident, IncidentAlert, IncidentNote
 from app.models.threat_intel import ThreatIoC
+from app.models.threat_feed import ThreatFeed
+from app.models.stix_object import STIXObject
 from app.models.ml_model import MLModelRegistry
 from app.models.audit import AuditLog
 from app.models.playbook import Playbook, PlaybookAction
 from app.models.response_execution import ResponseExecution, ResponseActionExecution
 from app.models.approval import ResponseApproval
+from app.models.investigation import (
+    InvestigationCase,
+    CaseEvidence,
+    CaseTimelineEvent,
+    CaseNote,
+    SavedSearch,
+)
 
 __all__ = [
     "Base",
@@ -24,6 +33,8 @@ __all__ = [
     "IncidentAlert",
     "IncidentNote",
     "ThreatIoC",
+    "ThreatFeed",
+    "STIXObject",
     "MLModelRegistry",
     "AuditLog",
     "Playbook",
@@ -31,4 +42,9 @@ __all__ = [
     "ResponseExecution",
     "ResponseActionExecution",
     "ResponseApproval",
+    "InvestigationCase",
+    "CaseEvidence",
+    "CaseTimelineEvent",
+    "CaseNote",
+    "SavedSearch",
 ]

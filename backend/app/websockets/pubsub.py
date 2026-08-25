@@ -73,6 +73,10 @@ async def start_redis_pubsub_listener():
                             req_perm = Permission.ALERTS_READ
                         elif envelope.type in ["incident_created", "incident_updated"]:
                             req_perm = Permission.INCIDENTS_READ
+                        elif envelope.type in ["ioc_created", "threat_feed_synced"]:
+                            req_perm = Permission.THREAT_INTEL_READ
+                        elif envelope.type in ["case_updated", "case_assigned", "evidence_added"]:
+                            req_perm = Permission.CASES_READ
                         elif envelope.type == "approval_requested":
                             req_perm = Permission.PLAYBOOKS_APPROVE
                         elif envelope.type in [
