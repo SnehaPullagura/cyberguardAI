@@ -1,0 +1,27 @@
+{
+  "name": "cyberguard-ai-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CyberGuard AI - Advanced Security Incident Detection & Automated Defense Platform",
+  "scripts": {
+    "start": "python main.py",
+    "dev:backend": "python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --reload",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "test": "pytest backend",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down"
+  },
+  "keywords": [
+    "cybersecurity",
+    "siem",
+    "soar",
+    "threat-intelligence",
+    "machine-learning",
+    "anomaly-detection",
+    "stix",
+    "taxii",
+    "mitre-attack",
+    "incident-response"
+  ]
+}

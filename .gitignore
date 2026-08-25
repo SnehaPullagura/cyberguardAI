@@ -32,10 +32,12 @@ venv.bak/
 
 # Environment variables & secrets
 .env
+.env*
 .env.local
 .env.*.local
 *.pem
 *.key
+*.env
 
 # Testing & Coverage
 .pytest_cache/
