@@ -66,6 +66,63 @@ def client(db_session):
     app.dependency_overrides.clear()
 
 
+from app.security.password import get_password_hash
+from app.models.user import User, Role
+
+
+@pytest.fixture
+def viewer_headers(db_session):
+    role = db_session.query(Role).filter(Role.name == "viewer").first()
+    if not role:
+        role = Role(name="viewer", description="Viewer")
+        db_session.add(role)
+        db_session.commit()
+
+    user = db_session.query(User).filter(User.username == "viewer_user").first()
+    if not user:
+        user = User(
+            username="viewer_user",
+            email="viewer@cyberguard.ai",
+            hashed_password=get_password_hash("Password123!"),
+            role_id=role.id,
+            is_active=True,
+        )
+        db_session.add(user)
+        db_session.commit()
+
+    token = create_access_token(subject=user.id)
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def auth_headers(viewer_headers):
+    return viewer_headers
+
+
+@pytest.fixture
+def analyst_headers(db_session):
+    role = db_session.query(Role).filter(Role.name == "security_analyst").first()
+    if not role:
+        role = Role(name="security_analyst", description="Analyst")
+        db_session.add(role)
+        db_session.commit()
+
+    user = db_session.query(User).filter(User.username == "analyst_user").first()
+    if not user:
+        user = User(
+            username="analyst_user",
+            email="analyst@cyberguard.ai",
+            hashed_password=get_password_hash("Password123!"),
+            role_id=role.id,
+            is_active=True,
+        )
+        db_session.add(user)
+        db_session.commit()
+
+    token = create_access_token(subject=user.id)
+    return {"Authorization": f"Bearer {token}"}
+
+
 @pytest.fixture
 def admin_headers(db_session):
     admin_user = db_session.query(User).filter(User.username == "admin").first()

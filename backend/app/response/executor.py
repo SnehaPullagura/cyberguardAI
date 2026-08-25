@@ -1,217 +1,321 @@
-import uuid
 import time
+import uuid
 import logging
+import asyncio
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.playbook import Playbook
 from app.models.response_execution import ResponseExecution, ResponseActionExecution
-from app.models.approval import ResponseApprovalRequest
+from app.models.user import User
+from app.response.enums import ResponseMode, ExecutionStatus, FailurePolicy, RiskLevel
 from app.response.action_registry import action_registry
+from app.response.safety_validator import action_safety_validator
 from app.response.trigger_evaluator import trigger_evaluator
-from app.response.cooldown import cooldown_manager
-from app.response.publisher import publish_response_event
+from app.response.loop_guard import loop_guard
+from app.response.policy_engine import policy_engine
+from app.response.approval_service import approval_service
 from app.services.audit_service import audit_service
+from app.schemas.websocket import RealtimeEventEnvelope
+from app.websockets.pubsub import publish_realtime_event
 
 logger = logging.getLogger(__name__)
 
 
 class PlaybookExecutor:
-    """Centralized response execution engine handling playbook evaluation, approval gates, dry-run/simulation execution, and verification."""
+    """Executes defensive response playbooks with safety validation, timeout, retries, and verification."""
 
-    def evaluate_and_execute_playbooks(
-        self,
-        db: Session,
-        context: Dict[str, Any],
-        user_id: Optional[str] = None,
-    ) -> List[ResponseExecution]:
-        """Evaluate active playbooks against incoming alert/incident context and execute matching workflows."""
-        executions = []
-        enabled_playbooks = db.query(Playbook).filter(Playbook.enabled == True).all()
-
-        for pb in enabled_playbooks:
-            # 1. Evaluate Risk Thresholds
-            risk_score = context.get("risk_score", 0.0)
-            if risk_score < pb.risk_score_threshold:
-                continue
-
-            # 2. Evaluate Structured Trigger Conditions
-            if not trigger_evaluator.evaluate_all_conditions(pb.trigger_conditions, context):
-                continue
-
-            # 3. Check Cooldown & Idempotency Lock
-            entity_id = context.get("source_entity") or context.get("event_id") or "global"
-            if not cooldown_manager.check_and_acquire_lock(pb.id, entity_id, pb.cooldown_seconds):
-                logger.info(f"Playbook {pb.name} suppressed by active cooldown.")
-                continue
-
-            # 4. Check Risk Level and Approval Requirements
-            requires_approval = pb.approval_required
-            action_list = pb.action_sequence or ["create_incident", "notify_security_team"]
-
-            for act_type in action_list:
-                act_meta = action_registry.get_action(act_type)
-                if act_meta and act_meta.risk_level in ["high", "critical"]:
-                    requires_approval = True
-
-            exec_id = f"exec-{uuid.uuid4().hex[:8]}"
-            started_at = datetime.utcnow()
-
-            if requires_approval:
-                # Gate execution -> PENDING_APPROVAL
-                execution = ResponseExecution(
-                    id=str(uuid.uuid4()),
-                    execution_id=exec_id,
-                    playbook_id=pb.id,
-                    alert_id=context.get("alert_id"),
-                    incident_id=context.get("incident_id"),
-                    status="pending_approval",
-                    mode="approval_required",
-                    started_at=started_at,
-                    requested_by_id=user_id,
-                    verification_status="pending",
-                )
-                db.add(execution)
-                db.flush()
-
-                approval_req = ResponseApprovalRequest(
-                    id=str(uuid.uuid4()),
-                    approval_id=f"appr-{uuid.uuid4().hex[:8]}",
-                    execution_id=execution.id,
-                    playbook_id=pb.id,
-                    incident_id=context.get("incident_id"),
-                    requested_by_id=user_id,
-                    status="pending",
-                    risk_level="high",
-                    reason=f"Playbook '{pb.name}' requires authorization for high-impact actions.",
-                    requested_at=started_at,
-                )
-                db.add(approval_req)
-                db.commit()
-
-                # Audit & WebSocket event
-                audit_service.log_action(
-                    db=db,
-                    action="PLAYBOOK_APPROVAL_REQUESTED",
-                    resource="playbooks",
-                    user_id=user_id,
-                    status="PENDING",
-                    details={"playbook_id": pb.playbook_id, "name": pb.name},
-                )
-                publish_response_event("approval_requested", {
-                    "execution_id": execution.execution_id,
-                    "playbook_name": pb.name,
-                    "approval_id": approval_req.approval_id,
-                })
-                executions.append(execution)
-            else:
-                # Immediate Dry-Run / Simulation Execution
-                execution = self.execute_playbook_actions(
-                    db=db,
-                    playbook=pb,
-                    context=context,
-                    execution_id=exec_id,
-                    mode="simulation",
-                    requested_by_id=user_id,
-                )
-                executions.append(execution)
-
-        return executions
-
-    def execute_playbook_actions(
+    def execute_playbook(
         self,
         db: Session,
         playbook: Playbook,
         context: Dict[str, Any],
-        execution_id: str,
-        mode: str = "simulation",
-        requested_by_id: Optional[str] = None,
-        approved_by_id: Optional[str] = None,
+        user: Optional[User] = None,
+        override_mode: Optional[ResponseMode] = None,
     ) -> ResponseExecution:
-        """Execute allowlisted actions sequentially for a playbook."""
+        """Evaluates triggers, policies, and runs the playbook action sequence."""
+        execution_id = f"EXEC-{uuid.uuid4().hex[:8].upper()}"
         start_time = time.time()
-        started_at = datetime.utcnow()
+        
+        # 1. Evaluate Trigger Conditions
+        if not trigger_evaluator.evaluate_all(playbook.trigger_conditions or [], context):
+            logger.info(f"[EXECUTOR] Playbook '{playbook.name}' triggers did not match context.")
+            return None
 
+        # 2. Loop Prevention Check
+        current_depth = int(context.get("execution_depth", 1))
+        if loop_guard.is_loop_detected(context, current_depth=current_depth):
+            logger.warning(f"[EXECUTOR] Loop detected for playbook '{playbook.name}'. Suppressing execution.")
+            return None
+
+        # 3. Policy & RBAC Evaluation
+        policy_result = policy_engine.evaluate_playbook_policy(playbook, context, user=user)
+        if not policy_result.allowed:
+            logger.info(f"[EXECUTOR] Playbook policy denied: {policy_result.reason}")
+            return None
+
+        effective_mode = override_mode or policy_result.mode
+
+        # 4. Acquire Cooldown Lock
+        entity_key = context.get("source_entity") or context.get("source_ip") or context.get("incident_id") or "global"
+        lock_acquired = loop_guard.acquire_execution_lock(
+            playbook_id=playbook.playbook_id,
+            entity_key=str(entity_key),
+            cooldown_seconds=playbook.cooldown_seconds,
+        )
+        if not lock_acquired:
+            logger.info(f"[EXECUTOR] Playbook '{playbook.name}' suppressed by cooldown for entity {entity_key}.")
+            return None
+
+        # 5. Create ResponseExecution Record in DB
         execution = ResponseExecution(
             id=str(uuid.uuid4()),
             execution_id=execution_id,
             playbook_id=playbook.id,
-            alert_id=context.get("alert_id"),
             incident_id=context.get("incident_id"),
-            status="running",
-            mode=mode,
-            started_at=started_at,
-            requested_by_id=requested_by_id,
-            approved_by_id=approved_by_id,
+            alert_id=context.get("alert_id"),
+            trigger_event_id=context.get("event_id"),
+            correlation_id=context.get("correlation_id") or str(uuid.uuid4()),
+            status=ExecutionStatus.RUNNING.value,
+            mode=effective_mode.value,
+            started_at=datetime.utcnow(),
+            triggered_by=user.username if user else "system",
+            execution_depth=current_depth,
+            result_metadata={"initial_context": {k: v for k, v in context.items() if k != "raw_payload"}},
         )
         db.add(execution)
-        db.flush()
-
-        publish_response_event("response_started", {
-            "execution_id": execution.execution_id,
-            "playbook_name": playbook.name,
-            "mode": mode,
-        })
-
-        action_sequence = playbook.action_sequence or ["create_incident", "notify_security_team"]
-        all_passed = True
-
-        for act_type in action_sequence:
-            act_meta = action_registry.get_action(act_type)
-            if not act_meta:
-                logger.warning(f"Unregistered action type '{act_type}' skipped.")
-                continue
-
-            act_start = time.time()
-            act_started_at = datetime.utcnow()
-
-            # Execute allowlisted action handler
-            status_res, meta_res, err_res = act_meta.handler(db, context, mode)
-            act_duration = (time.time() - act_start) * 1000.0
-
-            action_exec = ResponseActionExecution(
-                id=str(uuid.uuid4()),
-                execution_id=execution.id,
-                action_type=act_type,
-                status=status_res,
-                risk_level=act_meta.risk_level,
-                started_at=act_started_at,
-                completed_at=datetime.utcnow(),
-                duration_ms=act_duration,
-                verification_status="verified" if status_res in ["success", "simulated"] else "failed",
-                output=meta_res,
-                error=err_res,
-            )
-            db.add(action_exec)
-
-            if status_res == "failed":
-                all_passed = False
-
-        duration_ms = (time.time() - start_time) * 1000.0
-        execution.completed_at = datetime.utcnow()
-        execution.duration_ms = duration_ms
-        execution.status = "simulated" if mode == "simulation" else "success" if all_passed else "failed"
-        execution.verification_status = "verified" if all_passed else "failed"
-        execution.result_metadata = {"actions_executed": len(action_sequence), "all_passed": all_passed}
-
         db.commit()
+        db.refresh(execution)
 
+        # Broadcast playbook triggered & response started events
+        publish_realtime_event(
+            RealtimeEventEnvelope(
+                type="playbook_triggered",
+                correlation_id=execution.correlation_id,
+                data={
+                    "execution_id": execution.execution_id,
+                    "playbook_id": playbook.playbook_id,
+                    "playbook_name": playbook.name,
+                    "mode": effective_mode.value,
+                },
+            )
+        )
+        publish_realtime_event(
+            RealtimeEventEnvelope(
+                type="response_started",
+                correlation_id=execution.correlation_id,
+                data={
+                    "execution_id": execution.execution_id,
+                    "playbook_name": playbook.name,
+                    "started_at": execution.started_at.isoformat(),
+                },
+            )
+        )
+
+        # 6. Check if High-Risk Actions Require Approval
+        actions_list = playbook.action_sequence or []
+        for action_item in actions_list:
+            action_type = action_item.get("action_type") if isinstance(action_item, dict) else str(action_item)
+            action_cfg = action_item.get("action_config", {}) if isinstance(action_item, dict) else {}
+            
+            safety_res = action_safety_validator.validate_action_safety(
+                action_type=action_type,
+                action_config=action_cfg,
+                requested_mode=effective_mode,
+            )
+
+            if not safety_res.is_safe:
+                execution.status = ExecutionStatus.FAILED.value
+                execution.error_code = "SAFETY_VALIDATION_FAILED"
+                execution.error_message = safety_res.reason
+                execution.completed_at = datetime.utcnow()
+                execution.duration_ms = (time.time() - start_time) * 1000.0
+                db.commit()
+                return execution
+
+            if safety_res.requires_approval and effective_mode != ResponseMode.DRY_RUN:
+                # Pause execution and route to approval gate
+                execution.status = ExecutionStatus.PENDING_APPROVAL.value
+                db.commit()
+                db.refresh(execution)
+
+                approval_service.create_approval_request(
+                    db=db,
+                    execution=execution,
+                    action_type=action_type,
+                    risk_level=action_item.get("risk_level", "high"),
+                    requested_by_id=user.id if user else None,
+                )
+                return execution
+
+        # 7. Execute Action Sequence
+        all_success = True
+        for action_item in actions_list:
+            action_type = action_item.get("action_type") if isinstance(action_item, dict) else str(action_item)
+            action_cfg = action_item.get("action_config", {}) if isinstance(action_item, dict) else {}
+            timeout_sec = int(action_item.get("timeout_seconds", playbook.timeout_seconds))
+            retry_max = int(action_item.get("retry_count", 0))
+
+            action_success = self._execute_single_action(
+                db=db,
+                execution=execution,
+                action_type=action_type,
+                action_config=action_cfg,
+                context=context,
+                mode=effective_mode,
+                timeout_seconds=timeout_sec,
+                max_retries=retry_max,
+            )
+
+            if not action_success:
+                all_success = False
+                if playbook.failure_policy == FailurePolicy.STOP.value:
+                    logger.warning(f"[EXECUTOR] Halting playbook '{playbook.name}' due to failure in '{action_type}'.")
+                    break
+
+        # 8. Complete Execution
+        execution.status = ExecutionStatus.SUCCESS.value if all_success else ExecutionStatus.FAILED.value
+        if effective_mode == ResponseMode.DRY_RUN:
+            execution.status = ExecutionStatus.SIMULATED.value
+        elif effective_mode == ResponseMode.SIMULATION:
+            execution.status = ExecutionStatus.SIMULATED.value
+
+        execution.completed_at = datetime.utcnow()
+        execution.duration_ms = (time.time() - start_time) * 1000.0
+        db.commit()
+        db.refresh(execution)
+
+        # Audit execution completion
         audit_service.log_action(
             db=db,
-            action="PLAYBOOK_EXECUTED",
-            resource="playbooks",
-            user_id=requested_by_id or approved_by_id,
-            status="SUCCESS" if all_passed else "FAILED",
-            details={"playbook_id": playbook.playbook_id, "mode": mode, "status": execution.status},
+            action="RESPONSE_PLAYBOOK_EXECUTED",
+            resource=f"playbook/{playbook.playbook_id}",
+            user_id=user.id if user else None,
+            username=execution.triggered_by,
+            status="SUCCESS" if all_success else "FAILED",
+            details={
+                "execution_id": execution.execution_id,
+                "mode": execution.mode,
+                "status": execution.status,
+                "duration_ms": execution.duration_ms,
+            },
         )
-        publish_response_event("response_completed", {
-            "execution_id": execution.execution_id,
-            "playbook_name": playbook.name,
-            "status": execution.status,
-        })
+
+        # Broadcast completion WebSocket event
+        event_type = "response_completed" if all_success else "response_failed"
+        publish_realtime_event(
+            RealtimeEventEnvelope(
+                type=event_type,
+                correlation_id=execution.correlation_id,
+                data={
+                    "execution_id": execution.execution_id,
+                    "status": execution.status,
+                    "mode": execution.mode,
+                    "duration_ms": execution.duration_ms,
+                },
+            )
+        )
 
         return execution
+
+    def _execute_single_action(
+        self,
+        db: Session,
+        execution: ResponseExecution,
+        action_type: str,
+        action_config: Dict[str, Any],
+        context: Dict[str, Any],
+        mode: ResponseMode,
+        timeout_seconds: int = 30,
+        max_retries: int = 0,
+    ) -> bool:
+        """Executes a single allowlisted action with timeout, retry, and verification."""
+        action_def = action_registry.get(action_type)
+        if not action_def:
+            logger.error(f"[EXECUTOR] Action '{action_type}' not found in registry.")
+            return False
+
+        action_start = time.time()
+        action_exec = ResponseActionExecution(
+            id=str(uuid.uuid4()),
+            execution_id=execution.id,
+            action_type=action_type,
+            status=ExecutionStatus.RUNNING.value,
+            mode=mode.value,
+            started_at=datetime.utcnow(),
+            timeout_applied=timeout_seconds,
+            retry_count=0,
+        )
+        db.add(action_exec)
+        db.commit()
+        db.refresh(action_exec)
+
+        result = {}
+        success = False
+        error_msg = None
+
+        # Execute with retries
+        for attempt in range(max_retries + 1):
+            try:
+                # Synchronous adapter execution
+                result = action_def.execution_handler(
+                    db=db,
+                    config=action_config,
+                    context=context,
+                    mode=mode,
+                )
+                success = result.get("success", False)
+                if success:
+                    break
+                else:
+                    error_msg = result.get("error", "Action returned failure status.")
+            except Exception as e:
+                logger.exception(f"[EXECUTOR] Error running action '{action_type}': {e}")
+                error_msg = str(e)
+                success = False
+
+            if not success and attempt < max_retries:
+                backoff_wait = 2 ** attempt
+                time.sleep(min(backoff_wait, 10))
+
+        # Verification step
+        verification_status = "unverified"
+        if success:
+            try:
+                verified = action_def.verification_handler(result, context)
+                verification_status = "verified" if verified else "failed"
+            except Exception as e:
+                logger.warning(f"[EXECUTOR] Verification error on '{action_type}': {e}")
+                verification_status = "error"
+        else:
+            verification_status = "failed"
+
+        action_duration = (time.time() - action_start) * 1000.0
+        action_exec.status = ExecutionStatus.SUCCESS.value if success else ExecutionStatus.FAILED.value
+        action_exec.completed_at = datetime.utcnow()
+        action_exec.duration_ms = action_duration
+        action_exec.verification_status = verification_status
+        action_exec.error_message = error_msg
+        action_exec.result_metadata = result
+        db.commit()
+
+        # Broadcast action completed WebSocket event
+        publish_realtime_event(
+            RealtimeEventEnvelope(
+                type="response_action_completed",
+                correlation_id=execution.correlation_id,
+                data={
+                    "execution_id": execution.execution_id,
+                    "action_type": action_type,
+                    "status": action_exec.status,
+                    "verification_status": verification_status,
+                    "duration_ms": action_duration,
+                },
+            )
+        )
+
+        return success
 
 
 playbook_executor = PlaybookExecutor()

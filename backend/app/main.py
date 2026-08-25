@@ -119,6 +119,52 @@ def seed_initial_data(db: Session):
             )
         )
 
+    # 5. Seed Default Defensive Response Playbooks
+    from app.models.playbook import Playbook
+    pb1 = db.query(Playbook).filter(Playbook.playbook_id == "PB-DEFAULT-001").first()
+    if not pb1:
+        db.add(
+            Playbook(
+                playbook_id="PB-DEFAULT-001",
+                name="High Risk Login Attack Containment",
+                description="Automated incident creation, notification, and simulated account lock for high-risk authentication attacks.",
+                enabled=True,
+                response_mode="dry_run",
+                severity_threshold="high",
+                risk_score_threshold=75.0,
+                trigger_conditions=[{"field": "risk_score", "operator": "gte", "value": 75.0}],
+                action_sequence=[
+                    {"action_type": "create_incident", "action_config": {}, "risk_level": "low"},
+                    {"action_type": "notify_security_team", "action_config": {"channel": "soc-alerts"}, "risk_level": "low"},
+                    {"action_type": "account_lock_simulation", "action_config": {}, "risk_level": "high"},
+                ],
+                approval_required=False,
+                cooldown_seconds=300,
+            )
+        )
+
+    pb2 = db.query(Playbook).filter(Playbook.playbook_id == "PB-DEFAULT-002").first()
+    if not pb2:
+        db.add(
+            Playbook(
+                playbook_id="PB-DEFAULT-002",
+                name="Critical C2 Communication Isolation",
+                description="Firewall blocking and host quarantine simulation for critical C2 detections.",
+                enabled=True,
+                response_mode="dry_run",
+                severity_threshold="critical",
+                risk_score_threshold=90.0,
+                trigger_conditions=[{"field": "risk_score", "operator": "gte", "value": 90.0}],
+                action_sequence=[
+                    {"action_type": "create_incident", "action_config": {}, "risk_level": "low"},
+                    {"action_type": "network_block_simulation", "action_config": {}, "risk_level": "critical"},
+                    {"action_type": "quarantine_simulation", "action_config": {}, "risk_level": "high"},
+                ],
+                approval_required=True,
+                cooldown_seconds=300,
+            )
+        )
+
     db.commit()
 
 

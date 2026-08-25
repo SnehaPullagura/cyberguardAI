@@ -15,7 +15,6 @@ from app.services.alert_service import alert_service
 from app.ml.pipeline import ml_pipeline_manager
 from app.repositories.event_repository import event_repository
 from app.websockets.pubsub import publish_realtime_event
-from app.response.executor import playbook_executor
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +22,7 @@ logger = logging.getLogger(__name__)
 def process_single_security_event(
     db: Session, event_data: SecurityEventCreate
 ) -> SecurityEvent:
-    """Process a single SecurityEventCreate through normalization, EventRepository persistence, rule evaluation, IoC matching, ML anomaly detection, alert creation, incident correlation, real-time WebSockets, and Playbook Response Execution."""
+    """Process a single SecurityEventCreate through normalization, EventRepository persistence, rule evaluation, IoC matching, ML anomaly detection, alert creation, incident correlation, and real-time Redis Pub/Sub publishing."""
     # 1. Normalize if raw payload provided
     if event_data.raw_payload:
         normalized_event = normalizer.normalize(
@@ -137,8 +136,6 @@ def process_single_security_event(
         )
     )
 
-    generated_alerts = []
-
     # 5. Rule-Based Detection Engine Evaluation
     active_rules = (
         db.query(DetectionRule).filter(DetectionRule.enabled == True).all()
@@ -175,7 +172,6 @@ def process_single_security_event(
                     "action": normalized_event.action,
                 },
             )
-            generated_alerts.append(alert)
             publish_realtime_event(
                 RealtimeEventEnvelope(
                     type="alert_created",
@@ -206,7 +202,6 @@ def process_single_security_event(
             ),
             description=f"{match_details} ({ioc.threat_type} from {ioc.source})",
         )
-        generated_alerts.append(alert)
         publish_realtime_event(
             RealtimeEventEnvelope(
                 type="alert_created",
@@ -240,7 +235,6 @@ def process_single_security_event(
                 "ml_details": ml_result.dict() if ml_result else {},
             },
         )
-        generated_alerts.append(alert)
         publish_realtime_event(
             RealtimeEventEnvelope(
                 type="alert_created",
@@ -253,19 +247,6 @@ def process_single_security_event(
                 },
             )
         )
-
-    # 8. Trigger Automated Playbook & Response Engine
-    for alert in generated_alerts:
-        response_context = {
-            "alert_id": alert.id,
-            "event_id": normalized_event.event_id,
-            "severity": alert.severity,
-            "risk_score": alert.risk_score,
-            "source_entity": alert.source_entity,
-            "action": normalized_event.action,
-            "category": normalized_event.category,
-        }
-        playbook_executor.evaluate_and_execute_playbooks(db, response_context)
 
     db.commit()
     db.refresh(persisted_event)

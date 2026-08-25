@@ -3,6 +3,7 @@ import { ShieldAlert, Activity, AlertTriangle, Zap, Download, Radio } from 'luci
 import { apiClient } from '../api/client';
 import { DashboardSummary } from '../types';
 import { useWebSocket } from '../hooks/useWebSocket';
+
 import { PlaybookResponsePanel } from '../components/PlaybookResponsePanel';
 
 export const DashboardPage: React.FC = () => {
@@ -56,7 +57,7 @@ export const DashboardPage: React.FC = () => {
               <span>{status}</span>
             </span>
           </div>
-          <p className="text-sm text-slate-400 mt-1">Real-time WebSocket event streaming, AI threat detection & automated response engine</p>
+          <p className="text-sm text-slate-400 mt-1">Real-time WebSocket event streaming and AI threat detection</p>
         </div>
 
         <button
@@ -123,11 +124,9 @@ export const DashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Playbook Defensive Response Panel */}
-      <PlaybookResponsePanel />
-
       {/* Grid: Live Events Stream & Real-Time Alert Feed */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Live Security Log Stream */}
         <div className="lg:col-span-2 bg-slate-900/60 border border-slate-800 rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-slate-100 flex items-center space-x-2">
@@ -185,6 +184,7 @@ export const DashboardPage: React.FC = () => {
           </div>
         </div>
 
+        {/* Live Alerts Notifications */}
         <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-slate-100 flex items-center space-x-2">
@@ -226,6 +226,10 @@ export const DashboardPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Phase 6 Automated Playbook & Response Engine Panel */}
+      <PlaybookResponsePanel />
     </div>
   );
 };
+

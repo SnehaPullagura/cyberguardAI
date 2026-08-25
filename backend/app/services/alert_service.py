@@ -74,6 +74,13 @@ class AlertService:
         # Trigger event correlation to group alerts into incidents automatically
         correlation_engine.correlate_alerts(db, alert)
 
+        # Trigger response decision engine to evaluate active playbooks
+        try:
+            from app.response.decision_engine import response_decision_engine
+            response_decision_engine.evaluate_for_alert(db, alert)
+        except Exception:
+            pass
+
         return alert
 
     def update_alert_status(self, db: Session, alert_id: str, new_status: str) -> Alert:

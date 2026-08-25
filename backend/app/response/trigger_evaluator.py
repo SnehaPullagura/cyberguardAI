@@ -1,71 +1,69 @@
 import logging
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class TriggerEvaluator:
-    """Safe structured condition evaluator supporting allowlisted comparison operators without eval() or exec()."""
+    """Safe evaluator for structured playbook trigger conditions without dynamic code execution."""
 
-    ALLOWED_OPERATORS = ["gte", "gt", "lte", "lt", "eq", "ne", "in", "contains"]
+    SUPPORTED_OPERATORS = {
+        "eq": lambda a, b: a == b,
+        "ne": lambda a, b: a != b,
+        "gt": lambda a, b: float(a) > float(b),
+        "gte": lambda a, b: float(a) >= float(b),
+        "lt": lambda a, b: float(a) < float(b),
+        "lte": lambda a, b: float(a) <= float(b),
+        "contains": lambda a, b: str(b).lower() in str(a).lower() if a is not None else False,
+        "in": lambda a, b: a in b if isinstance(b, (list, tuple, set)) else str(a) in str(b),
+    }
 
-    def evaluate_condition(self, condition: Dict[str, Any], context: Dict[str, Any]) -> bool:
-        """Evaluate a single structured condition against event/alert/incident context."""
+    @staticmethod
+    def get_field_value(context: Dict[str, Any], field_path: str) -> Any:
+        """Safely extract nested field from context dictionary using dot-notation."""
+        if not field_path:
+            return None
+        parts = field_path.split(".")
+        current = context
+        for part in parts:
+            if isinstance(current, dict):
+                current = current.get(part)
+            elif hasattr(current, part):
+                current = getattr(current, part)
+            else:
+                return None
+        return current
+
+    def evaluate_single_condition(self, condition: Dict[str, Any], context: Dict[str, Any]) -> bool:
+        """Evaluates a single condition dictionary against context."""
         field = condition.get("field")
-        op = condition.get("operator")
-        target_val = condition.get("value")
+        op = str(condition.get("operator", "eq")).lower()
+        target_value = condition.get("value")
 
-        if not field or not op or op not in self.ALLOWED_OPERATORS:
+        if not field or op not in self.SUPPORTED_OPERATORS:
+            logger.warning(f"Invalid condition specification: {condition}")
             return False
 
-        # Extract field value from context dictionary
-        actual_val = self._extract_nested_value(context, field)
-        if actual_val is None:
+        actual_value = self.get_field_value(context, field)
+        if actual_value is None:
             return False
 
         try:
-            if op == "gte":
-                return float(actual_val) >= float(target_val)
-            elif op == "gt":
-                return float(actual_val) > float(target_val)
-            elif op == "lte":
-                return float(actual_val) <= float(target_val)
-            elif op == "lt":
-                return float(actual_val) < float(target_val)
-            elif op == "eq":
-                return str(actual_val).lower() == str(target_val).lower()
-            elif op == "ne":
-                return str(actual_val).lower() != str(target_val).lower()
-            elif op == "in":
-                if isinstance(target_val, list):
-                    return str(actual_val) in [str(x) for x in target_val]
-                return str(actual_val) in str(target_val)
-            elif op == "contains":
-                return str(target_val).lower() in str(actual_val).lower()
+            eval_fn = self.SUPPORTED_OPERATORS[op]
+            return bool(eval_fn(actual_value, target_value))
         except (ValueError, TypeError) as e:
-            logger.warning(f"Error evaluating condition {condition}: {e}")
+            logger.debug(f"Type error evaluating condition {field} {op} {target_value}: {e}")
             return False
 
-        return False
-
-    def evaluate_all_conditions(self, conditions: List[Dict[str, Any]], context: Dict[str, Any]) -> bool:
-        """Evaluate list of conditions; all must evaluate to True (AND logic)."""
+    def evaluate_all(self, conditions: List[Dict[str, Any]], context: Dict[str, Any]) -> bool:
+        """Evaluates all conditions with logical AND. Returns True if all conditions pass or if conditions list is empty."""
         if not conditions:
             return True
+
         for cond in conditions:
-            if not self.evaluate_condition(cond, context):
+            if not self.evaluate_single_condition(cond, context):
                 return False
         return True
-
-    def _extract_nested_value(self, data: Dict[str, Any], path: str) -> Any:
-        parts = path.split(".")
-        curr = data
-        for p in parts:
-            if isinstance(curr, dict) and p in curr:
-                curr = curr[p]
-            else:
-                return None
-        return curr
 
 
 trigger_evaluator = TriggerEvaluator()

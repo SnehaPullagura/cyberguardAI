@@ -34,11 +34,11 @@ class Permission(str, Enum):
     USERS_READ = "users:read"
     USERS_MANAGE = "users:manage"
 
-    # Phase 6 Automated Playbook & Response Engine Permissions
     PLAYBOOKS_READ = "playbooks:read"
     PLAYBOOKS_WRITE = "playbooks:write"
     PLAYBOOKS_EXECUTE = "playbooks:execute"
     PLAYBOOKS_APPROVE = "playbooks:approve"
+
     RESPONSES_READ = "responses:read"
     RESPONSES_EXECUTE = "responses:execute"
 

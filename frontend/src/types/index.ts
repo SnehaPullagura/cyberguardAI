@@ -70,9 +70,83 @@ export interface DashboardSummary {
 
 export type ConnectionStatus = 'CONNECTED' | 'CONNECTING' | 'RECONNECTING' | 'DISCONNECTED';
 
+export interface Playbook {
+  id: string;
+  playbook_id: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  response_mode: 'dry_run' | 'simulation' | 'approval_required' | 'authorized_execution';
+  severity_threshold: string;
+  risk_score_threshold: number;
+  trigger_conditions: Array<Record<string, any>>;
+  action_sequence: Array<Record<string, any>>;
+  approval_required: boolean;
+  cooldown_seconds: number;
+  created_at: string;
+}
+
+export interface ResponseActionExecution {
+  id: string;
+  action_type: string;
+  status: string;
+  mode: string;
+  started_at: string;
+  completed_at?: string;
+  duration_ms: number;
+  verification_status: string;
+  error_message?: string;
+}
+
+export interface ResponseApproval {
+  id: string;
+  approval_id: string;
+  execution_id: string;
+  incident_id?: string;
+  playbook_id?: string;
+  action_type: string;
+  risk_level: string;
+  requested_at: string;
+  decision: 'pending' | 'approved' | 'rejected' | 'expired';
+  reason?: string;
+}
+
+export interface ResponseExecution {
+  id: string;
+  execution_id: string;
+  playbook_id?: string;
+  incident_id?: string;
+  alert_id?: string;
+  status: 'pending_approval' | 'approved' | 'running' | 'success' | 'failed' | 'simulated' | 'rejected' | 'cancelled';
+  mode: 'dry_run' | 'simulation' | 'approval_required' | 'authorized_execution';
+  started_at: string;
+  completed_at?: string;
+  duration_ms: number;
+  triggered_by: string;
+  action_executions?: ResponseActionExecution[];
+  approval_requests?: ResponseApproval[];
+}
+
 export interface RealtimeEventEnvelope {
   message_id: string;
-  type: 'security_event' | 'alert_created' | 'alert_updated' | 'incident_created' | 'incident_updated' | 'dashboard_metric' | 'heartbeat' | 'system_status' | 'error';
+  type:
+    | 'security_event'
+    | 'alert_created'
+    | 'alert_updated'
+    | 'incident_created'
+    | 'incident_updated'
+    | 'dashboard_metric'
+    | 'heartbeat'
+    | 'system_status'
+    | 'error'
+    | 'playbook_triggered'
+    | 'approval_requested'
+    | 'approval_approved'
+    | 'approval_rejected'
+    | 'response_started'
+    | 'response_action_completed'
+    | 'response_completed'
+    | 'response_failed';
   timestamp: string;
   correlation_id?: string;
   schema_version: string;
