@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, CheckCircle2, Clock, ShieldAlert } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 import { apiClient } from '../api/client';
 import { Incident } from '../types';
 

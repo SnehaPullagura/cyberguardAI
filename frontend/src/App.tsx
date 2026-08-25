@@ -8,15 +8,18 @@ import { IncidentsPage } from './pages/IncidentsPage';
 import { RulesPage } from './pages/RulesPage';
 import { MLPage } from './pages/MLPage';
 import { LoginPage } from './pages/LoginPage';
+import { InvestigationPage } from './pages/InvestigationPage';
+import { ComplianceReportsPage } from './pages/ComplianceReportsPage';
 
 export const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(
-    Boolean(localStorage.getItem('access_token'))
+    Boolean(localStorage.getItem('access_token') || localStorage.getItem('token'))
   );
 
   const handleLogout = () => {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
+    localStorage.removeItem('token');
     setIsAuthenticated(false);
   };
 
@@ -35,6 +38,8 @@ export const App: React.FC = () => {
               <Route path="/" element={<DashboardPage />} />
               <Route path="/events" element={<EventsPage />} />
               <Route path="/incidents" element={<IncidentsPage />} />
+              <Route path="/investigations" element={<InvestigationPage />} />
+              <Route path="/compliance" element={<ComplianceReportsPage />} />
               <Route path="/rules" element={<RulesPage />} />
               <Route path="/ml" element={<MLPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />

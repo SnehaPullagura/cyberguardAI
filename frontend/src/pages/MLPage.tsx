@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Cpu, Play, CheckCircle } from 'lucide-react';
+import { Play } from 'lucide-react';
 import { apiClient } from '../api/client';
 
 export const MLPage: React.FC = () => {

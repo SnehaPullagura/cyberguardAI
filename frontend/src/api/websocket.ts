@@ -16,10 +16,10 @@ export class ReconnectingWebSocketClient {
   private heartbeatTimer: any = null;
 
   constructor(url: string) {
-    self_assign_url(this, url);
+    this.url = url;
   }
 
-  public async connect() {
+  public async connect(_token?: string) {
     this.reconnectAttempts = 0;
     await this.initSocket();
   }
@@ -135,10 +135,6 @@ export class ReconnectingWebSocketClient {
   public getStatus(): ConnectionStatus {
     return this.status;
   }
-}
-
-function self_assign_url(instance: ReconnectingWebSocketClient, url: string) {
-  (instance as any).url = url;
 }
 
 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

@@ -1,12 +1,14 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Activity, AlertTriangle, Cpu, FileText, Settings } from 'lucide-react';
+import { LayoutDashboard, Activity, AlertTriangle, Cpu, FileText, Settings, Shield } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
   const navItems = [
     { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-    { label: 'Events Stream', path: '/events', icon: Activity },
+    { label: 'Live Events', path: '/events', icon: Activity },
     { label: 'Incidents Board', path: '/incidents', icon: AlertTriangle },
+    { label: 'Investigations', path: '/investigations', icon: Shield },
+    { label: 'Compliance & Reports', path: '/compliance', icon: FileText },
     { label: 'Detection Rules', path: '/rules', icon: Settings },
     { label: 'AI & ML Pipeline', path: '/ml', icon: Cpu },
   ];
@@ -33,8 +35,8 @@ export const Sidebar: React.FC = () => {
       </nav>
 
       <div className="p-3 bg-slate-800/40 rounded-lg border border-slate-800 text-xs text-slate-400 space-y-1">
-        <div className="font-semibold text-slate-300">CyberGuard AI Engine</div>
-        <div>v1.0.0 (FastAPI + PyTorch)</div>
+        <div className="font-semibold text-slate-300">CyberGuard AI Enterprise</div>
+        <div>v1.0.0 (FastAPI + TimescaleDB)</div>
         <div className="text-emerald-400">● 100% Ingestion Ready</div>
       </div>
     </aside>
