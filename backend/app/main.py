@@ -1,12 +1,12 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.database import engine, Base, SessionLocal
+from app.database import engine, Base, SessionLocal, get_db
 from app.models import User, Role, Permission, DetectionRule, ThreatIoC
 from app.security.password import get_password_hash
 from app.api.v1.router import api_v1_router
@@ -224,3 +224,25 @@ def root():
         "version": settings.VERSION,
         "docs": f"{settings.API_V1_STR}/docs",
     }
+
+
+@app.get("/metrics")
+def get_prometheus_metrics():
+    """Prometheus metrics endpoint."""
+    from app.observability.metrics import metrics
+    from fastapi import Response
+    return Response(
+        content=metrics.generate_prometheus_exposition(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
+@app.get("/health/live")
+def root_liveness_probe():
+    return {"status": "alive"}
+
+
+@app.get("/health/ready")
+def root_readiness_probe(db: Session = Depends(get_db)):
+    from app.api.v1.health import readiness_probe
+    return readiness_probe(db=db)

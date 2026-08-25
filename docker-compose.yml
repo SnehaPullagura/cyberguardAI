@@ -1,0 +1,112 @@
+version: "3.8"
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: cyberguard-timescaledb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cyberguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-SecureCyberPass2026!}
+      POSTGRES_DB: ${POSTGRES_DB:-cyberguard}
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cyberguard} -d ${POSTGRES_DB:-cyberguard}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: cyberguard-redis
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cyberguard-backend
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cyberguard}:${POSTGRES_PASSWORD:-SecureCyberPass2026!}@timescaledb:5432/${POSTGRES_DB:-cyberguard}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-CyberguardEnterpriseSecretKeyMustChangeInProd2026!}
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  background-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cyberguard-worker
+    command: ["python", "-m", "app.queue.worker"]
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cyberguard}:${POSTGRES_PASSWORD:-SecureCyberPass2026!}@timescaledb:5432/${POSTGRES_DB:-cyberguard}
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: INFO
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  threat-feed-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cyberguard-threat-worker
+    command: ["python", "-m", "app.threat_intel.feed_scheduler"]
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cyberguard}:${POSTGRES_PASSWORD:-SecureCyberPass2026!}@timescaledb:5432/${POSTGRES_DB:-cyberguard}
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: INFO
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: cyberguard-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  timescaledb_data:
+  redis_data:
