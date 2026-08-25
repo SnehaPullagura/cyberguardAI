@@ -34,6 +34,14 @@ class Permission(str, Enum):
     USERS_READ = "users:read"
     USERS_MANAGE = "users:manage"
 
+    # Phase 6 Automated Playbook & Response Engine Permissions
+    PLAYBOOKS_READ = "playbooks:read"
+    PLAYBOOKS_WRITE = "playbooks:write"
+    PLAYBOOKS_EXECUTE = "playbooks:execute"
+    PLAYBOOKS_APPROVE = "playbooks:approve"
+    RESPONSES_READ = "responses:read"
+    RESPONSES_EXECUTE = "responses:execute"
+
 
 # Role Permission Mappings
 ROLE_PERMISSIONS = {
@@ -56,6 +64,10 @@ ROLE_PERMISSIONS = {
         Permission.REPORTS_EXPORT,
         Permission.AUDIT_READ,
         Permission.USERS_READ,
+        Permission.PLAYBOOKS_READ,
+        Permission.PLAYBOOKS_EXECUTE,
+        Permission.RESPONSES_READ,
+        Permission.RESPONSES_EXECUTE,
     },
     "viewer": {
         Permission.EVENTS_READ,
@@ -65,6 +77,8 @@ ROLE_PERMISSIONS = {
         Permission.THREAT_INTEL_READ,
         Permission.ML_READ,
         Permission.REPORTS_READ,
+        Permission.PLAYBOOKS_READ,
+        Permission.RESPONSES_READ,
     },
 }
 

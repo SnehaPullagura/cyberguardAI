@@ -7,6 +7,9 @@ from app.models.incident import Incident, IncidentAlert, IncidentNote
 from app.models.threat_intel import ThreatIoC
 from app.models.ml_model import MLModelRegistry
 from app.models.audit import AuditLog
+from app.models.playbook import Playbook
+from app.models.response_execution import ResponseExecution, ResponseActionExecution
+from app.models.approval import ResponseApprovalRequest
 
 __all__ = [
     "Base",
@@ -23,4 +26,8 @@ __all__ = [
     "ThreatIoC",
     "MLModelRegistry",
     "AuditLog",
+    "Playbook",
+    "ResponseExecution",
+    "ResponseActionExecution",
+    "ResponseApprovalRequest",
 ]
