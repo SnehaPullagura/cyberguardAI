@@ -12,6 +12,7 @@ from app.engines.threat_intel_matcher import threat_intel_matcher
 from app.engines.risk_engine import risk_scoring_engine
 from app.services.alert_service import alert_service
 from app.ml.pipeline import ml_pipeline_manager
+from app.repositories.event_repository import event_repository
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 def process_single_security_event(
     db: Session, event_data: SecurityEventCreate
 ) -> SecurityEvent:
-    """Process a single SecurityEventCreate through normalization, DB persistence, rule evaluation, IoC matching, ML anomaly detection, alert creation, and incident correlation."""
+    """Process a single SecurityEventCreate through normalization, EventRepository persistence, rule evaluation, IoC matching, ML anomaly detection, alert creation, and incident correlation."""
     # 1. Normalize if raw payload provided
     if event_data.raw_payload:
         normalized_event = normalizer.normalize(
@@ -30,7 +31,21 @@ def process_single_security_event(
     else:
         normalized_event = event_data
 
-    # 2. Persist to Event Store
+    # 2. Compute AI Anomaly Detection Inference
+    is_anomaly, anomaly_score, features = (
+        ml_pipeline_manager.predict_event_anomaly(normalized_event)
+    )
+
+    # Calculate initial event risk score
+    calculated_risk = 0.0
+    if normalized_event.severity == "critical":
+        calculated_risk = 90.0
+    elif normalized_event.severity == "high":
+        calculated_risk = 75.0
+    elif normalized_event.severity == "medium":
+        calculated_risk = 50.0
+
+    # 3. Create SecurityEvent model object
     db_event = SecurityEvent(
         event_id=normalized_event.event_id,
         timestamp=normalized_event.timestamp or datetime.utcnow(),
@@ -92,13 +107,18 @@ def process_single_security_event(
             if normalized_event.process
             else None
         ),
+        risk_score=calculated_risk,
+        anomaly_score=anomaly_score,
         raw_payload=normalized_event.raw_payload,
         normalized_payload=normalized_event.normalized_payload,
     )
-    db.add(db_event)
-    db.flush()
 
-    # 3. Rule-Based Detection Engine Evaluation
+    # 4. Save to Event Storage Layer (TimescaleDB / Partitioned EventRepository)
+    persisted_event, is_new = event_repository.save_event(db, db_event)
+    if not is_new:
+        return persisted_event
+
+    # 5. Rule-Based Detection Engine Evaluation
     active_rules = (
         db.query(DetectionRule).filter(DetectionRule.enabled == True).all()
     )
@@ -135,7 +155,7 @@ def process_single_security_event(
                 },
             )
 
-    # 4. Threat Intelligence Matching
+    # 6. Threat Intelligence Matching
     ioc_matches = threat_intel_matcher.check_event(db, normalized_event)
     for ioc, match_details in ioc_matches:
         alert_service.create_alert(
@@ -153,10 +173,7 @@ def process_single_security_event(
             description=f"{match_details} ({ioc.threat_type} from {ioc.source})",
         )
 
-    # 5. AI Anomaly Detection Inference
-    is_anomaly, anomaly_score, features = (
-        ml_pipeline_manager.predict_event_anomaly(normalized_event)
-    )
+    # 7. AI Anomaly Detection Alert Creation
     if is_anomaly and anomaly_score > 0.7:
         alert_service.create_alert(
             db=db,
@@ -177,5 +194,5 @@ def process_single_security_event(
         )
 
     db.commit()
-    db.refresh(db_event)
-    return db_event
+    db.refresh(persisted_event)
+    return persisted_event

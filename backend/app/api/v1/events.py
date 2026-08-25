@@ -17,6 +17,7 @@ from app.normalization.normalizer import normalizer
 from app.queue.redis_queue import redis_queue
 from app.pipeline.processor import process_single_security_event
 from app.security.rbac import require_permission, Permission
+from app.repositories.event_repository import event_repository
 
 router = APIRouter(prefix="/events", tags=["Security Events & Ingestion"])
 
@@ -94,39 +95,32 @@ def check_ingestion_health():
 
 @router.get("", response_model=List[SecurityEventRead])
 def search_events(
+    response: Response,
+    cursor: Optional[str] = Query(None, description="Cursor for keyset pagination (format: 'timestamp_iso|id')"),
     source_type: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     severity: Optional[str] = Query(None),
     source_ip: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
-    skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.EVENTS_READ)),
 ):
-    """Search and filter normalized security events with pagination."""
-    query = db.query(SecurityEvent)
-
-    if source_type:
-        query = query.filter(SecurityEvent.source_type == source_type)
-    if category:
-        query = query.filter(SecurityEvent.category == category)
-    if severity:
-        query = query.filter(SecurityEvent.severity == severity)
-    if source_ip:
-        query = query.filter(SecurityEvent.source_ip == source_ip)
-    if search:
-        query = query.filter(
-            (SecurityEvent.raw_payload.ilike(f"%{search}%"))
-            | (SecurityEvent.action.ilike(f"%{search}%"))
-        )
-
-    events = (
-        query.order_by(SecurityEvent.timestamp.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
+    """High-performance time-series event search with Keyset/Cursor pagination."""
+    events, next_cursor = event_repository.search_events_keyset(
+        db=db,
+        cursor=cursor,
+        limit=limit,
+        source_type=source_type,
+        category=category,
+        severity=severity,
+        source_ip=source_ip,
+        search=search,
     )
+
+    if next_cursor:
+        response.headers["X-Next-Cursor"] = next_cursor
+
     return events
 
 
@@ -136,14 +130,15 @@ def get_event_by_id(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.EVENTS_READ)),
 ):
-    """Retrieve detailed security event record by ID."""
-    event = (
-        db.query(SecurityEvent)
-        .filter(
-            (SecurityEvent.id == event_id) | (SecurityEvent.event_id == event_id)
+    """Retrieve detailed security event record by ID from EventRepository."""
+    event = event_repository.find_by_event_id(db, event_id)
+    if not event:
+        # Fallback query by internal UUID
+        event = (
+            db.query(SecurityEvent)
+            .filter(SecurityEvent.id == event_id)
+            .first()
         )
-        .first()
-    )
     if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Event not found"

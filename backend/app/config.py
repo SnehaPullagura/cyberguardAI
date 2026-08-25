@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     MAX_RETRIES: int = 3
     EVENT_IDEMPOTENCY_TTL_SECONDS: int = 86400  # 24 hours
 
+    # Time-Series Storage & Retention Settings (Phase 3)
+    EVENT_RETENTION_DAYS: int = 90
+    TIMESCALE_ENABLED: bool = True
+    EVENT_PARTITION_INTERVAL_DAYS: int = 7
+
     # ML Storage Path
     ML_MODEL_DIR: str = os.path.join(os.path.dirname(__file__), "..", "ml", "artifacts")
 
