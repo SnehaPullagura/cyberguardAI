@@ -45,12 +45,14 @@ dev = [
     "mypy>=1.9.0",
 ]
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+exclude = ["tests*", "ml*", "alembic*"]
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra -q --durations=10"
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
-env = [
-    "TESTING=1",
-]
