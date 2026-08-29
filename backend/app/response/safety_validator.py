@@ -19,6 +19,39 @@ class ActionSafetyValidator:
     """Validates action safety, risk level, response mode boundaries, and blocks dangerous commands."""
 
     FORBIDDEN_CONFIG_KEYS = {"command", "cmd", "shell", "script", "code", "eval", "exec", "query", "raw_sql"}
+    SHELL_INJECTION_CHARS = {";", "&&", "||", "|", "`", "$(", "\n", "\r"}
+
+    def _has_forbidden_keys(self, data: Any) -> Optional[str]:
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(k, str) and k.lower() in self.FORBIDDEN_CONFIG_KEYS:
+                    return k
+                found = self._has_forbidden_keys(v)
+                if found:
+                    return found
+        elif isinstance(data, list):
+            for item in data:
+                found = self._has_forbidden_keys(item)
+                if found:
+                    return found
+        return None
+
+    def _has_shell_injection(self, data: Any) -> Optional[str]:
+        if isinstance(data, dict):
+            for k, v in data.items():
+                found = self._has_shell_injection(v)
+                if found:
+                    return found
+        elif isinstance(data, list):
+            for item in data:
+                found = self._has_shell_injection(item)
+                if found:
+                    return found
+        elif isinstance(data, str):
+            for char in self.SHELL_INJECTION_CHARS:
+                if char in data:
+                    return f"Injection character '{char}' detected in value '{data[:30]}'"
+        return None
 
     def validate_action_safety(
         self,
@@ -35,13 +68,21 @@ class ActionSafetyValidator:
                 reason=f"Action '{action_type}' is NOT in the allowlisted Action Registry. Execution blocked."
             )
 
-        # 2. Check for dangerous command/code keys in action configuration
-        for k in action_config.keys():
-            if k.lower() in self.FORBIDDEN_CONFIG_KEYS:
-                return SafetyValidationResult(
-                    is_safe=False,
-                    reason=f"Dangerous parameter '{k}' detected in action config. Arbitrary code/command execution is forbidden."
-                )
+        # 2. Check for dangerous command/code keys in action configuration (recursive)
+        forbidden_key = self._has_forbidden_keys(action_config)
+        if forbidden_key:
+            return SafetyValidationResult(
+                is_safe=False,
+                reason=f"Dangerous parameter '{forbidden_key}' detected in action config. Arbitrary code/command execution is forbidden."
+            )
+
+        # 2b. Check for shell injection metacharacters in parameter values
+        injection_err = self._has_shell_injection(action_config)
+        if injection_err:
+            return SafetyValidationResult(
+                is_safe=False,
+                reason=f"Suspicious metacharacter pattern detected: {injection_err}. Execution blocked."
+            )
 
         # 3. RBAC permission validation if user permissions provided
         if user_permissions is not None:
