@@ -1,7 +1,7 @@
 import math
 import logging
 from typing import Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,12 @@ class IoCConfidenceScorer:
         "email": 45.0,
     }
 
+    @staticmethod
+    def _normalize_utc(dt: datetime) -> datetime:
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
     def compute_composite_confidence(
         self,
         base_confidence: float,
@@ -56,8 +62,9 @@ class IoCConfidenceScorer:
         current_time: Optional[datetime] = None,
     ) -> float:
         """Calculates exponential time-decay score: S(t) = S_0 * 2^(-dt / half_life)."""
-        now = current_time or datetime.utcnow()
-        dt_days = max(0.0, (now - last_seen).total_seconds() / 86400.0)
+        now = self._normalize_utc(current_time) if current_time else datetime.now(timezone.utc)
+        norm_last_seen = self._normalize_utc(last_seen)
+        dt_days = max(0.0, (now - norm_last_seen).total_seconds() / 86400.0)
         half_life = self.HALF_LIFE_DAYS.get(ioc_type.lower(), 30.0)
         
         decay_factor = math.pow(2.0, -dt_days / half_life)
@@ -71,8 +78,10 @@ class IoCConfidenceScorer:
         min_threshold: float = 0.20,
     ) -> bool:
         """Returns True if IoC has expired past explicit expiry date or decayed below minimum threshold."""
-        if expires_at and datetime.utcnow() > expires_at:
-            return True
+        if expires_at:
+            norm_expires = self._normalize_utc(expires_at)
+            if datetime.now(timezone.utc) > norm_expires:
+                return True
         return decayed_score < min_threshold
 
 
