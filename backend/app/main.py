@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -180,9 +181,18 @@ async def lifespan(app: FastAPI):
         db.close()
 
     # Launch background Redis Pub/Sub listener for real-time WebSockets
-    pubsub_task = asyncio.create_task(start_redis_pubsub_listener())
+    pubsub_task = None
+    if os.environ.get("TESTING") != "1":
+        pubsub_task = asyncio.create_task(start_redis_pubsub_listener())
+
     yield
-    pubsub_task.cancel()
+
+    if pubsub_task:
+        pubsub_task.cancel()
+        try:
+            await pubsub_task
+        except asyncio.CancelledError:
+            pass
     logger.info("Shutting down CyberGuard AI service...")
 
 

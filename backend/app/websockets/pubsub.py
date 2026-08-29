@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 REALTIME_PUBSUB_CHANNEL = "cyberguard:realtime:events"
 
-
 _redis_client_instance: Optional[Redis] = None
 _redis_unavailable: bool = False
 
@@ -55,12 +54,18 @@ async def start_redis_pubsub_listener():
     while True:
         try:
             r = get_redis_client()
+            if not r:
+                await asyncio.sleep(5)
+                continue
+
             pubsub = r.pubsub()
             pubsub.subscribe(REALTIME_PUBSUB_CHANNEL)
 
-            for item in pubsub.listen():
-                if item["type"] == "message":
-                    raw_data = item["data"]
+            while True:
+                # Non-blocking async fetch from Redis PubSub
+                message = await asyncio.to_thread(pubsub.get_message, ignore_subscribe_messages=True, timeout=0.5)
+                if message and message.get("type") == "message":
+                    raw_data = message.get("data")
                     try:
                         data_dict = json.loads(raw_data)
                         envelope = RealtimeEventEnvelope(**data_dict)
@@ -94,7 +99,10 @@ async def start_redis_pubsub_listener():
                     except Exception as e:
                         logger.warning(f"Error parsing Pub/Sub message: {e}")
 
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            logger.info("Redis Pub/Sub listener canceled.")
+            break
         except Exception as e:
             logger.warning(f"Redis Pub/Sub listener disconnected ({e}), retrying in 5 seconds...")
             await asyncio.sleep(5)
