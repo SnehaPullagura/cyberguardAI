@@ -1,4 +1,4 @@
-name: CyberGuard AI Backend CI
+name: CyberGuard AI Platform CI
 
 on:
   push:
@@ -7,7 +7,8 @@ on:
     branches: [ main, develop ]
 
 jobs:
-  test:
+  backend-test:
+    name: Backend Pytest & Verification
     runs-on: ubuntu-latest
 
     services:
@@ -39,24 +40,54 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install dependencies
+      - name: Install Python Dependencies
         working-directory: ./backend
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pytest-cov pytest-asyncio
+          pip install -e .
 
-      - name: Run Pytest Test Suite
+      - name: Run Backend Pytest Test Suite
         working-directory: ./backend
         env:
+          TESTING: "1"
           POSTGRES_SERVER: localhost
           POSTGRES_USER: cyberguard
           POSTGRES_PASSWORD: cyberguard_secret
           POSTGRES_DB: cyberguard_db
           REDIS_HOST: localhost
         run: |
-          pytest --cov=app --cov-report=xml
+          pytest
 
       - name: Upload coverage report
         uses: codecov/codecov-action@v4
+        continue-on-error: true
         with:
           file: ./backend/coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+  frontend-test:
+    name: Frontend Build & Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ./frontend/package.json
+
+      - name: Install Frontend Dependencies
+        working-directory: ./frontend
+        run: |
+          npm install
+
+      - name: Build React Production Assets
+        working-directory: ./frontend
+        run: |
+          npm run build
