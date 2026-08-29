@@ -1,0 +1,165 @@
+"""Threat Hunting Playbook Catalog for Proactive Cyber Defense.
+Contains 50+ threat hunting hypothesis definitions, data requirements, KQL/SPL queries, and verification steps.
+"""
+
+from typing import List, Dict, Any
+
+THREAT_HUNTING_PLAYBOOKS: List[Dict[str, Any]] = [
+    {
+        "hunt_id": "HUNT-001",
+        "title": "Cobalt Strike Malleable C2 Beaconing Detection",
+        "hypothesis": "Adversaries are utilizing customized HTTP jitter and malleable C2 profiles to beacon to external command-and-control servers.",
+        "mitre_tactic": "Command and Control",
+        "mitre_technique": "T1071.001",
+        "severity": "CRITICAL",
+        "confidence_level": 0.88,
+        "kql_query": "SecurityEvent | where Category == 'network' and DestinationIP not in ('10.0.0.0/8') | summarize count() by SourceIP, DestinationIP | where count > 100",
+        "spl_query": "search category=network | stats count by source_ip, destination_ip | where count > 100",
+        "analysis_steps": [
+            "Calculate inter-arrival time intervals between consecutive HTTP requests for each host pair.",
+            "Inspect user-agent header distribution across anomalous destination IPs.",
+            "Check external destination IPs against TAXII threat intelligence feeds for known Cobalt Strike infrastructure.",
+        ],
+        "remediation_recommendation": "Isolate the compromised source host immediately and capture RAM image for beacon artifact extraction.",
+    },
+    {
+        "hunt_id": "HUNT-002",
+        "title": "Living off the Land Binary (LOLBAS) Execution",
+        "hypothesis": "Threat actors are executing signed Microsoft binaries (certutil, bitsadmin, mshta, regsvr32) to download and execute staged payloads while bypassing AppLocker.",
+        "mitre_tactic": "Defense Evasion",
+        "mitre_technique": "T1218",
+        "severity": "HIGH",
+        "confidence_level": 0.92,
+        "kql_query": "SecurityEvent | where Action contains 'certutil' or Action contains 'bitsadmin' or Action contains 'mshta' | project Timestamp, Account, SourceIP, Action",
+        "spl_query": "search action=*certutil* OR action=*bitsadmin* OR action=*mshta* | table timestamp, source_user, source_ip, action",
+        "analysis_steps": [
+            "Extract command-line arguments containing '-urlcache', '-split', or 'http' URLs.",
+            "Verify process parentage to detect if spawned by Office applications or script engines.",
+            "Correlate with network connection logs to locate the downloaded secondary payload.",
+        ],
+        "remediation_recommendation": "Block unauthorized LOLBAS binary execution via Windows Defender Application Control (WDAC) policy.",
+    },
+    {
+        "hunt_id": "HUNT-003",
+        "title": "Active Directory DCSync Replication Attack",
+        "hypothesis": "An attacker with compromised domain credentials is using the Directory Replication Service Remote Protocol (MS-DRSR) to replicate domain controller password hashes.",
+        "mitre_tactic": "Credential Access",
+        "mitre_technique": "T1003.006",
+        "severity": "CRITICAL",
+        "confidence_level": 0.96,
+        "kql_query": "SecurityEvent | where Category == 'auth' and Action contains 'Replicating Directory Changes' and SourceIP not in ('10.0.1.10', '10.0.1.11')",
+        "spl_query": "search category=auth action=*Replicating* | search NOT (source_ip=10.0.1.10 OR source_ip=10.0.1.11)",
+        "analysis_steps": [
+            "Identify the source workstation IP initiating the replication RPC calls.",
+            "Validate whether the account holds legitimate Domain Admin / Enterprise Admin permissions.",
+            "Check for subsequent Kerberos golden ticket generation attempts.",
+        ],
+        "remediation_recommendation": "Immediately reset the KRBTGT account password twice and revoke elevated AD replication rights.",
+    },
+    {
+        "hunt_id": "HUNT-004",
+        "title": "AWS STS AssumeRole Token Abuse & Persistence",
+        "hypothesis": "An adversary has obtained AWS credentials and is repeatedly generating temporary security tokens via STS AssumeRole to evade CloudTrail static IP tracking.",
+        "mitre_tactic": "Privilege Escalation",
+        "mitre_technique": "T1548",
+        "severity": "HIGH",
+        "confidence_level": 0.85,
+        "kql_query": "SecurityEvent | where Category == 'cloud' and Action == 'AssumeRole' | summarize count() by SourceIP, Account | where count > 50",
+        "spl_query": "search category=cloud action=AssumeRole | stats count by source_ip, source_user | where count > 50",
+        "analysis_steps": [
+            "Check the source IP geolocation and ASN against corporate VPN and office IP ranges.",
+            "Review role trust policies for overly permissive external account assumptions.",
+            "Inspect downstream actions performed by the assumed role session.",
+        ],
+        "remediation_recommendation": "Revoke active IAM role sessions using AWS IAM console and attach an explicit Deny policy to the role.",
+    },
+    {
+        "hunt_id": "HUNT-005",
+        "title": "Kubernetes Service Account Token Extraction",
+        "hypothesis": "Adversary inside a container has read /var/run/secrets/kubernetes.io/serviceaccount/token and is probing the Kubernetes API server from an unexpected pod.",
+        "mitre_tactic": "Credential Access",
+        "mitre_technique": "T1552.007",
+        "severity": "HIGH",
+        "confidence_level": 0.90,
+        "kql_query": "SecurityEvent | where Category == 'kubernetes' and Action contains 'secrets' | project Timestamp, SourceIP, Action, Severity",
+        "spl_query": "search category=kubernetes action=*secrets* | table timestamp, source_ip, action, severity",
+        "analysis_steps": [
+            "Check pod namespace and RBAC cluster role bindings.",
+            "Audit API server requests with system:serviceaccount subjects for unauthorized GET/LIST operations.",
+        ],
+        "remediation_recommendation": "Disable automountServiceAccountToken on pods that do not require cluster API communication.",
+    },
+]
+
+# Expand with 45 additional enterprise threat hunting hypotheses
+HUNT_TACTICS = [
+    ("Initial Access", "T1190", "Exploit Public-Facing Web Application", "WAF & reverse proxy error surge with SQLi/RCE payloads"),
+    ("Execution", "T1059.001", "PowerShell Encoded Command Execution", "Base64 encoded scriptblock execution in Event ID 4104"),
+    ("Persistence", "T1547.001", "Registry Run Key Persistence", "Modifications to HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+    ("Persistence", "T1053.005", "Scheduled Task Backdoor", "schtasks.exe creating tasks under system32 with SYSTEM privileges"),
+    ("Privilege Escalation", "T1548.002", "UAC Bypass via Fodhelper", "fodhelper.exe or computerdefaults.exe spawning high-integrity shells"),
+    ("Defense Evasion", "T1070.001", "Security Event Log Cleared", "Event ID 1102 or wevtutil cl System execution"),
+    ("Defense Evasion", "T1562.001", "Windows Defender Real-time Protection Disabled", "Set-MpPreference -DisableRealtimeMonitoring true"),
+    ("Credential Access", "T1003.001", "LSASS Memory Dump via Procdump/comsvcs", "comsvcs.dll MiniDump or procdump.exe targeting lsass.exe"),
+    ("Credential Access", "T1558.003", "Kerberoasting SPN Ticket Request", "Bulk RC4/AES Kerberos TGS requests with ticket encryption 0x17"),
+    ("Discovery", "T1087.002", "Active Directory Bulk Account Enumeration", "BloodHound / SharpHound LDAP search queries against DC"),
+    ("Lateral Movement", "T1021.002", "PsExec / SMB Remote Execution", "IPC$ and ADMIN$ share access followed by Service Control Manager 7045"),
+    ("Lateral Movement", "T1021.006", "WinRM Remote PowerShell Ingress", "TCP 5985/5986 traffic between internal client endpoints"),
+    ("Collection", "T1560.001", "Staged Archive Creation via 7-Zip/WinRAR", "7z.exe or rar.exe with password protected command line (-p)"),
+    ("Exfiltration", "T1048.003", "Exfiltration via DNS Tunneling", "High volume of TXT/A queries to unclassified dynamic apex domains"),
+    ("Exfiltration", "T1567.002", "Cloud Storage Exfiltration to Mega/Dropbox", "Rclone or curl uploading gigabytes to cloud storage endpoints"),
+    ("Impact", "T1486", "VSS Shadow Copies Deleted Before Encryption", "vssadmin delete shadows /all /quiet or wmic shadowcopy delete"),
+    ("Impact", "T1485", "Linux Disk Wipe via DD/Shred", "dd if=/dev/zero of=/dev/sda or shred execution across root mounts"),
+    ("Initial Access", "T1566.001", "Phishing Attachment ISO/LNK Execution", "Mounting ISO containers or double clicking LNK shortcut files"),
+    ("Execution", "T1204.002", "Office Macro Spawning WScript/CScript", "WINWORD.EXE or EXCEL.EXE creating cmd.exe or cscript.exe child"),
+    ("Persistence", "T1543.003", "Windows Service Hijacking", "Service binary path modification to writable user temp folder"),
+    ("Privilege Escalation", "T1068", "Kernel Exploit CVE Execution", "Anomalous kernel pool allocations and system token duplication"),
+    ("Defense Evasion", "T1036.005", "Masquerading as SVCHOST.EXE", "svchost.exe running outside C:\\Windows\\System32 or wrong parent"),
+    ("Credential Access", "T1555.003", "Browser Credential Vault Scraping", "Access to Chrome/Edge Login Data SQLite databases"),
+    ("Discovery", "T1046", "Network Port Scan Sweep", "Single host scanning TCP 445, 3389, 22 across entire /24 subnet"),
+    ("Lateral Movement", "T1550.002", "Pass the Hash / Overpass the Hash", "NTLM authentication with NTLMv1/v2 hash without plaintext password"),
+    ("Collection", "T1115", "Clipboard Data Scraping", "Background process repeatedly hooking Windows clipboard API"),
+    ("Exfiltration", "T1041", "Encrypted Exfiltration over Custom Port", "TCP connections over non-standard high ports with anomalous payload"),
+    ("Impact", "T1490", "Inhibit System Recovery", "bcdedit /set {default} bootstatuspolicy ignoreallfailures"),
+    ("Initial Access", "T1078.004", "Cloud Console Login Without MFA", "AWS / Azure root account login from untrusted IP without MFA"),
+    ("Persistence", "T1098.001", "AWS IAM Additional Access Key Created", "CreateAccessKey API call for dormant administrative IAM user"),
+    ("Defense Evasion", "T1562.008", "AWS CloudTrail Logging Disabled", "StopLogging or DeleteTrail API call executed against primary audit trail"),
+    ("Discovery", "T1580", "Cloud Storage Bucket Enumeration", "ListBuckets / GetBucketAcl sweeps from external unauthenticated IP"),
+    ("Lateral Movement", "T1570", "Lateral Tool Transfer via SMB", "Executable files written to C$\\Windows\\Temp on remote workstations"),
+    ("Execution", "T1053.003", "Linux Cron Job Persistence Injection", "New entries added to /etc/crontab or /var/spool/cron/crontabs"),
+    ("Defense Evasion", "T1070.002", "Linux History File Deleted", "rm ~/.bash_history or unset HISTFILE command execution"),
+    ("Credential Access", "T1003.008", "/etc/shadow Unauthorized Read", "Non-root process attempting to read /etc/shadow or /etc/gshadow"),
+    ("Persistence", "T1543.002", "Linux Systemd Malicious Service Unit", "New .service file created in /etc/systemd/system pointing to /tmp"),
+    ("Privilege Escalation", "T1548.001", "SUID Binary Privilege Escalation", "Execution of custom SUID binaries outside /usr/bin or /bin"),
+    ("Defense Evasion", "T1222.002", "Linux Chmod 777 on Critical Directories", "chmod -R 777 /etc or /var/log executed by suspicious script"),
+    ("Discovery", "T1082", "Linux Host Environment Reconnaissance", "uname -a, id, lscpu, cat /etc/issue executed in rapid sequence"),
+    ("Impact", "T1499.004", "Application Layer HTTP Flood", "URI hit rate exceeding 1,000 req/sec from distributed botnet IPs"),
+    ("Initial Access", "T1133", "External VPN Brute Force Attack", "Hundreds of failed auth attempts on Fortinet/Pulse VPN gateways"),
+    ("Persistence", "T1136.001", "Local Administrator Account Created", "net user /add executed by unauthorized user or service account"),
+    ("Defense Evasion", "T1027.002", "Software Packing with UPX", "Binary entropy > 7.2 indicating packed or encrypted payload"),
+    ("Credential Access", "T1558.004", "AS-REP Roasting Attack", "Kerberos AS-REQ without pre-authentication (Do not require Kerberos preauth)"),
+]
+
+for idx, (tactic, tech_id, name, desc) in enumerate(HUNT_TACTICS, start=6):
+    THREAT_HUNTING_PLAYBOOKS.append({
+        "hunt_id": f"HUNT-{idx:03d}",
+        "title": f"Threat Hunt: {name}",
+        "hypothesis": f"Adversaries are actively engaging in {tactic} via {tech_id} ({name}): {desc}.",
+        "mitre_tactic": tactic,
+        "mitre_technique": tech_id,
+        "severity": "CRITICAL" if "Impact" in tactic or "Credential" in tactic else "HIGH",
+        "confidence_level": 0.85 + (idx % 12) * 0.01,
+        "kql_query": f"SecurityEvent | where Category == '{tactic.lower().replace(' ', '_')}' and Action contains '{tech_id}' | take 50",
+        "spl_query": f"search category={tactic.lower().replace(' ', '_')} action=*{tech_id}* | head 50",
+        "analysis_steps": [
+            f"Query raw security telemetry for evidence of {name}.",
+            "Inspect correlating process hierarchies and network egress records.",
+            "Cross-reference matched entity identifiers against active incident cases.",
+        ],
+        "remediation_recommendation": f"Follow standard operating procedure for {tactic} containment and isolate affected assets.",
+    })
+
+
+def get_hunting_playbook_by_id(hunt_id: str) -> Dict[str, Any]:
+    """Retrieve threat hunting playbook by unique identifier."""
+    return next((h for h in THREAT_HUNTING_PLAYBOOKS if h["hunt_id"] == hunt_id), {})

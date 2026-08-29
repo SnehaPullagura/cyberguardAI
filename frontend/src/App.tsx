@@ -10,6 +10,8 @@ import { MLPage } from './pages/MLPage';
 import { LoginPage } from './pages/LoginPage';
 import { InvestigationPage } from './pages/InvestigationPage';
 import { ComplianceReportsPage } from './pages/ComplianceReportsPage';
+import { ThreatHuntingPage } from './pages/ThreatHuntingPage';
+import { VulnerabilityPosturePage } from './pages/VulnerabilityPosturePage';
 
 export const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(
@@ -39,6 +41,8 @@ export const App: React.FC = () => {
               <Route path="/events" element={<EventsPage />} />
               <Route path="/incidents" element={<IncidentsPage />} />
               <Route path="/investigations" element={<InvestigationPage />} />
+              <Route path="/hunting" element={<ThreatHuntingPage />} />
+              <Route path="/posture" element={<VulnerabilityPosturePage />} />
               <Route path="/compliance" element={<ComplianceReportsPage />} />
               <Route path="/rules" element={<RulesPage />} />
               <Route path="/ml" element={<MLPage />} />

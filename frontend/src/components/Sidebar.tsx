@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Activity, AlertTriangle, Cpu, FileText, Settings, Shield } from 'lucide-react';
+import { LayoutDashboard, Activity, AlertTriangle, Cpu, FileText, Settings, Shield, Crosshair, ShieldCheck } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
   const navItems = [
@@ -8,6 +8,8 @@ export const Sidebar: React.FC = () => {
     { label: 'Live Events', path: '/events', icon: Activity },
     { label: 'Incidents Board', path: '/incidents', icon: AlertTriangle },
     { label: 'Investigations', path: '/investigations', icon: Shield },
+    { label: 'Threat Hunting', path: '/hunting', icon: Crosshair },
+    { label: 'Vulnerability Posture', path: '/posture', icon: ShieldCheck },
     { label: 'Compliance & Reports', path: '/compliance', icon: FileText },
     { label: 'Detection Rules', path: '/rules', icon: Settings },
     { label: 'AI & ML Pipeline', path: '/ml', icon: Cpu },

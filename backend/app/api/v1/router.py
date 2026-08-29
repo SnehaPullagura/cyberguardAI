@@ -15,6 +15,8 @@ from app.api.v1 import (
     playbooks,
     responses,
     investigations,
+    hunting,
+    posture,
 )
 
 api_v1_router = APIRouter()
@@ -33,3 +35,5 @@ api_v1_router.include_router(websocket_router.router)
 api_v1_router.include_router(playbooks.router)
 api_v1_router.include_router(responses.router)
 api_v1_router.include_router(investigations.router)
+api_v1_router.include_router(hunting.router)
+api_v1_router.include_router(posture.router)
