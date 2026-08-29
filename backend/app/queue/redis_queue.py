@@ -26,6 +26,15 @@ class RedisQueueManager:
         self._in_memory_queue.clear()
         self._in_memory_processed.clear()
         self._redis_disabled = False
+        try:
+            client = self.get_client()
+            if client:
+                client.delete(self.queue_name, self.dlq_name)
+                keys = client.keys("cyberguard:events:processed:*")
+                if keys:
+                    client.delete(*keys)
+        except Exception:
+            pass
 
     def get_client(self) -> Optional[redis.Redis]:
         """Lazy initialization of Redis client connection with fast failure timeout."""

@@ -1,10 +1,11 @@
 import uuid
 from app.schemas.event import SecurityEventCreate, EndpointSchema
-from app.queue.redis_queue import RedisQueueManager
+from app.queue.redis_queue import redis_queue
 
 
 def test_queue_publish_and_pop():
-    queue = RedisQueueManager()
+    queue = redis_queue
+    queue.reset_state()
     event_id = str(uuid.uuid4())
     event = SecurityEventCreate(
         event_id=event_id,
@@ -27,7 +28,8 @@ def test_queue_publish_and_pop():
 
 
 def test_queue_idempotency_duplicate_prevention():
-    queue = RedisQueueManager()
+    queue = redis_queue
+    queue.reset_state()
     event_id = f"unique-id-{uuid.uuid4().hex}"
 
     # First attempt should not be duplicate
@@ -50,7 +52,8 @@ def test_queue_idempotency_duplicate_prevention():
 
 
 def test_queue_dlq_routing():
-    queue = RedisQueueManager()
+    queue = redis_queue
+    queue.reset_state()
     failed_event = {"event_id": "failed-123", "retry_count": 3, "action": "crash"}
 
     queue.push_dlq(failed_event, error_reason="Max retries exceeded")
@@ -58,7 +61,7 @@ def test_queue_dlq_routing():
 
 
 def test_queue_health_check():
-    queue = RedisQueueManager()
+    queue = redis_queue
     health = queue.get_health()
 
     assert "status" in health
