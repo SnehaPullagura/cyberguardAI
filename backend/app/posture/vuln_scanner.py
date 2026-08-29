@@ -126,6 +126,37 @@ class VulnerabilityPostureScanner:
     def __init__(self):
         self.cve_catalog = CISA_KNOWN_EXPLOITED_VULNERABILITIES
 
+    @staticmethod
+    def calculate_remediation_sla_status(due_date_str: str) -> Dict[str, Any]:
+        try:
+            due_dt = datetime.strptime(due_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            days_remaining = (due_dt - now).total_seconds() / 86400.0
+
+            if days_remaining < 0:
+                status = "OVERDUE"
+                penalty = 1.25  # 25% risk escalation for overdue KEVs
+            elif days_remaining <= 7:
+                status = "DUE_SOON"
+                penalty = 1.10
+            else:
+                status = "COMPLIANT"
+                penalty = 1.0
+
+            return {
+                "sla_status": status,
+                "days_remaining": round(days_remaining, 1),
+                "is_overdue": days_remaining < 0,
+                "risk_multiplier": penalty
+            }
+        except Exception:
+            return {
+                "sla_status": "UNKNOWN",
+                "days_remaining": 0.0,
+                "is_overdue": False,
+                "risk_multiplier": 1.0
+            }
+
     def scan_asset_vulnerabilities(self, asset_software_list: List[Dict[str, str]]) -> Dict[str, Any]:
         """Matches an asset's software inventory against the vulnerability catalog."""
         matched_vulns = []
@@ -137,15 +168,20 @@ class VulnerabilityPostureScanner:
                 prod = vuln.get("product", "").lower()
                 vdr = vuln.get("vendor", "").lower()
                 if prod in sw_name or vdr in sw_name:
-                    # Calculate composite risk score based on CVSS and EPSS
-                    composite_risk = (vuln["cvss_v3_score"] * 0.6) + (vuln["epss_score"] * 10 * 0.4)
+                    sla_info = self.calculate_remediation_sla_status(vuln.get("due_date", "2026-12-31"))
+                    # Calculate composite risk score based on CVSS, EPSS and SLA urgency
+                    base_composite = (vuln["cvss_v3_score"] * 0.6) + (vuln["epss_score"] * 10 * 0.4)
+                    adjusted_risk = min(10.0, round(base_composite * sla_info["risk_multiplier"], 2))
+
                     matched_vulns.append({
                         **vuln,
                         "matched_software": sw.get("name"),
-                        "composite_risk_score": round(composite_risk, 2),
-                        "priority_level": "CRITICAL" if composite_risk >= 8.5 else ("HIGH" if composite_risk >= 7.0 else "MEDIUM"),
+                        "composite_risk_score": adjusted_risk,
+                        "sla_status": sla_info["sla_status"],
+                        "days_to_due_date": sla_info["days_remaining"],
+                        "priority_level": "CRITICAL" if adjusted_risk >= 8.5 else ("HIGH" if adjusted_risk >= 7.0 else "MEDIUM"),
                     })
-                    total_risk_score += composite_risk
+                    total_risk_score += adjusted_risk
 
         matched_vulns.sort(key=lambda x: x["composite_risk_score"], reverse=True)
 
@@ -154,6 +190,7 @@ class VulnerabilityPostureScanner:
             "critical_count": sum(1 for v in matched_vulns if v["priority_level"] == "CRITICAL"),
             "high_count": sum(1 for v in matched_vulns if v["priority_level"] == "HIGH"),
             "medium_count": sum(1 for v in matched_vulns if v["priority_level"] == "MEDIUM"),
+            "overdue_count": sum(1 for v in matched_vulns if v.get("sla_status") == "OVERDUE"),
             "overall_asset_risk_score": round(min(100.0, total_risk_score), 2),
             "vulnerabilities": matched_vulns,
         }
