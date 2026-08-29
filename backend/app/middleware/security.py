@@ -18,15 +18,24 @@ def reset_rate_limits():
     _RATE_LIMIT_STORE.clear()
 
 
+import re
+
+SAFE_CORRELATION_ID_REGEX = re.compile(r"^[a-zA-Z0-9\-_]{1,64}$")
+
+
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
-    """Middleware injecting unique X-Correlation-ID into request context and response headers."""
+    """Middleware injecting validated unique X-Correlation-ID into request context and response headers."""
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
-        request.state.correlation_id = correlation_id
+        incoming_id = request.headers.get("X-Correlation-ID", "")
+        if incoming_id and SAFE_CORRELATION_ID_REGEX.match(incoming_id):
+            correlation_id = incoming_id
+        else:
+            correlation_id = str(uuid.uuid4())
 
+        request.state.correlation_id = correlation_id
         response = await call_next(request)
         response.headers["X-Correlation-ID"] = correlation_id
         return response
@@ -46,6 +55,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "max-age=31536000; includeSubDomains"
         )
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         return response
 
 
@@ -73,15 +83,26 @@ class RateLimitationMiddleware(BaseHTTPMiddleware):
             start_time, count = _RATE_LIMIT_STORE.get(key, (now, 0))
             if now - start_time > window_sec:
                 _RATE_LIMIT_STORE[key] = (now, 1)
+                current_count = 1
             else:
                 if count >= max_reqs:
                     logger.warning(f"Rate limit exceeded for client {client_ip} on route {path}")
                     return JSONResponse(
                         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                         content={"detail": "Too many requests. Please try again later."},
-                        headers={"Retry-After": str(int(window_sec - (now - start_time)))},
+                        headers={
+                            "Retry-After": str(int(window_sec - (now - start_time))),
+                            "X-RateLimit-Limit": str(max_reqs),
+                            "X-RateLimit-Remaining": "0"
+                        },
                     )
-                _RATE_LIMIT_STORE[key] = (start_time, count + 1)
+                current_count = count + 1
+                _RATE_LIMIT_STORE[key] = (start_time, current_count)
+
+            response = await call_next(request)
+            response.headers["X-RateLimit-Limit"] = str(max_reqs)
+            response.headers["X-RateLimit-Remaining"] = str(max(0, max_reqs - current_count))
+            return response
 
         return await call_next(request)
 
